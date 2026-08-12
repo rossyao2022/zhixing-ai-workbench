@@ -1,0 +1,23 @@
+.DS_Store
+.claude/
+.codex/
+.cursor/
+node_modules/
+dist/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+design-review/*.png
+design-review/screenshots/
+设计图/**/*.png
+
+# Internal product context and research. Keep these files locally, but never
+# include them in the shareable application repository.
+/AI 小白工作管家 PRD.md
+/PRD-学习平台需求评审-v1.md
+/内部附页-*.md
+/分析-*.md
+/逐字稿-*.txt
+/design-review/
+/design-system/
+/设计图/
