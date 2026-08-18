@@ -41,7 +41,7 @@ const preview = spawn(process.execPath, [viteBin, "preview", "--host", "127.0.0.
 
 try {
   await waitForPreview();
-  for (const script of ["qa_app.py", "qa_eight_immortals.py", "qa_i18n_visual.py", "qa_mobile_responsive.py"]) {
+  for (const script of ["qa_app.py", "qa_eight_immortals.py", "qa_i18n_visual.py", "qa_mobile_responsive.py", "qa_membership.py"]) {
     await run(python, [path.join("tests", script)], { KUAKUA_BASE_URL: baseUrl });
   }
 } finally {

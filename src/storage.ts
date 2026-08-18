@@ -37,6 +37,15 @@ const ACCOUNTS_KEY = "kuakua-ai.accounts.v1";
 const PROGRESS_KEY = "kuakua-ai.progress.v1";
 const SESSION_KEY = "kuakua-ai.session.v1";
 
+function localDemoAccessEnabled() {
+  if (typeof window === "undefined") return false;
+  return window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+}
+
+function isDemoAccountId(userId: string) {
+  return userId === "demo-learner" || userId === "demo-mentor" || userId === "demo-admin";
+}
+
 const seedAccounts: UserAccount[] = [
   {
     id: "demo-learner",
@@ -184,13 +193,18 @@ function makeId(prefix: string) {
 
 export function loadAccounts(): UserAccount[] {
   const parsed = safeParse(readLocalValue(ACCOUNTS_KEY));
-  const stored = Array.isArray(parsed) ? parsed.filter(isUserAccount) : [];
+  const valid = Array.isArray(parsed) ? parsed.filter(isUserAccount) : [];
+  const stored = localDemoAccessEnabled() ? valid : valid.filter((account) => !isDemoAccountId(account.id));
   if (stored.length > 0) {
     if (!Array.isArray(parsed) || stored.length !== parsed.length) saveAccounts(stored);
     return stored;
   }
-  writeLocalValue(ACCOUNTS_KEY, JSON.stringify(seedAccounts));
-  return seedAccounts;
+  if (localDemoAccessEnabled()) {
+    writeLocalValue(ACCOUNTS_KEY, JSON.stringify(seedAccounts));
+    return seedAccounts;
+  }
+  if (!Array.isArray(parsed) || valid.length > 0) writeLocalValue(ACCOUNTS_KEY, "[]");
+  return [];
 }
 
 export function saveAccounts(accounts: UserAccount[]) {
@@ -279,11 +293,20 @@ export async function registerAccount(input: {
 }
 
 export function saveSession(userId: string) {
+  if (!localDemoAccessEnabled() && isDemoAccountId(userId)) {
+    removeLocalValue(SESSION_KEY);
+    return;
+  }
   writeLocalValue(SESSION_KEY, userId);
 }
 
 export function loadSession() {
-  return readLocalValue(SESSION_KEY) ?? "";
+  const userId = readLocalValue(SESSION_KEY) ?? "";
+  if (!localDemoAccessEnabled() && isDemoAccountId(userId)) {
+    removeLocalValue(SESSION_KEY);
+    return "";
+  }
+  return userId;
 }
 
 export function clearSession() {

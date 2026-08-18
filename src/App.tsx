@@ -12,9 +12,11 @@ import {
   ChevronRight,
   CirclePlay,
   CircleUserRound,
+  Clock3,
   Clipboard,
   ClipboardCheck,
   Compass,
+  Crown,
   FileText,
   ExternalLink,
   Eye,
@@ -22,6 +24,7 @@ import {
   Flame,
   GraduationCap,
   Globe2,
+  Gift,
   Home,
   KeyRound,
   Layers3,
@@ -36,6 +39,8 @@ import {
   Orbit,
   Play,
   Quote,
+  QrCode,
+  ReceiptText,
   RotateCcw,
   ShieldCheck,
   Sparkles,
@@ -46,6 +51,7 @@ import {
   UserPlus,
   UsersRound,
   Video,
+  WalletCards,
   X,
   Zap,
 } from "lucide-react";
@@ -63,6 +69,28 @@ import { lessonGuides, moduleGuides } from "./learningContent";
 import { eightImmortals, immortalByStage } from "./eightImmortals";
 import { localeOptions, useI18n } from "./i18n";
 import { localizeMethod, methodFrameworks, methodUi, workbenchLanes } from "./methodLibrary";
+import {
+  MEMBERSHIP_PLANS,
+  PRO_AI_MONTHLY_RUN_LIMIT,
+  membershipPlanList,
+  type AiUsageDecision,
+  type MembershipPlan,
+  type MembershipPlanId,
+  type MembershipSnapshot,
+  type MembershipTier,
+} from "./membership";
+import {
+  consumeAiToolRun,
+  createEnterpriseRedemptionCodes,
+  createPaymentOrder,
+  getUserAiDecision,
+  loadMembershipSnapshot,
+  loadPaymentOrders,
+  loadRedemptionCodes,
+  redeemMembershipCode,
+  reviewPaymentOrder,
+  type PaymentOrder,
+} from "./membershipStorage";
 import {
   authenticate,
   clearSession,
@@ -84,7 +112,7 @@ import {
   type UserRole,
 } from "./storage";
 
-type AppView = "home" | "course" | "journey" | "buddy" | "admin" | "profile";
+type AppView = "home" | "course" | "journey" | "buddy" | "membership" | "admin" | "profile";
 
 function localDateKey(date = new Date()) {
   const year = date.getFullYear();
@@ -124,6 +152,10 @@ function resetScrollPosition() {
   });
 }
 
+function isLocalPreviewHost() {
+  return window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+}
+
 function App() {
   const { t, roleLabel } = useI18n();
   const initialSession = loadSession();
@@ -138,6 +170,13 @@ function App() {
   const [reward, setReward] = useState<{ xp: number; levelUp: number } | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [toast, setToast] = useState("");
+  const [showMembershipGate, setShowMembershipGate] = useState(false);
+  const [membership, setMembership] = useState<MembershipSnapshot | null>(() =>
+    initialSession ? loadMembershipSnapshot(initialSession) : null,
+  );
+  const [aiDecision, setAiDecision] = useState<AiUsageDecision | null>(() =>
+    initialSession ? getUserAiDecision(initialSession) : null,
+  );
 
   const user = accounts.find((account) => account.id === sessionUserId) ?? null;
   const today = localDateKey();
@@ -146,6 +185,8 @@ function App() {
   useEffect(() => {
     if (!sessionUserId) {
       setProgress(null);
+      setMembership(null);
+      setAiDecision(null);
       return;
     }
     const account = accounts.find((item) => item.id === sessionUserId);
@@ -153,6 +194,8 @@ function App() {
       clearSession();
       setSessionUserId("");
       setProgress(null);
+      setMembership(null);
+      setAiDecision(null);
       return;
     }
 
@@ -170,6 +213,8 @@ function App() {
     } else {
       setProgress(current);
     }
+    setMembership(loadMembershipSnapshot(sessionUserId));
+    setAiDecision(getUserAiDecision(sessionUserId));
   }, [accounts, sessionUserId, today]);
 
   useEffect(() => {
@@ -194,6 +239,28 @@ function App() {
   }, [sessionUserId, showPraise]);
 
   useEffect(() => {
+    if (!sessionUserId) return;
+    const refresh = () => {
+      setMembership(loadMembershipSnapshot(sessionUserId));
+      setAiDecision(getUserAiDecision(sessionUserId));
+    };
+    const interval = window.setInterval(refresh, 60_000);
+    const expiryDelay = membership?.expiresAt ? Date.parse(membership.expiresAt) - Date.now() + 50 : 0;
+    const expiryTimer = expiryDelay > 0
+      ? window.setTimeout(refresh, Math.min(expiryDelay, 2_147_000_000))
+      : 0;
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key?.startsWith("kuakua-ai.")) refresh();
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.clearInterval(interval);
+      if (expiryTimer) window.clearTimeout(expiryTimer);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [membership?.expiresAt, sessionUserId]);
+
+  useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(""), 3200);
     return () => window.clearTimeout(timer);
@@ -204,7 +271,24 @@ function App() {
   const buddyLevel = getBuddyLevel(progress?.xp ?? 0);
   const nextLesson = allLessons.find((lesson) => !completed.includes(lesson.id)) ?? null;
   const selectedLesson = selectedLessonId ? allLessons.find((lesson) => lesson.id === selectedLessonId) ?? null : null;
-  const openLesson = (lesson: Lesson) => setSelectedLessonId(lesson.id);
+  const learningAccessIsCurrent = () => Boolean(user && loadMembershipSnapshot(user.id).benefits.canStartLearning);
+  useEffect(() => {
+    if (!selectedLessonId || !user || membership?.benefits.canStartLearning) return;
+    setSelectedLessonId("");
+    setShowMembershipGate(true);
+  }, [membership?.benefits.canStartLearning, selectedLessonId, user]);
+  const refreshMembership = (userId = sessionUserId) => {
+    if (!userId) return;
+    setMembership(loadMembershipSnapshot(userId));
+    setAiDecision(getUserAiDecision(userId));
+  };
+  const openLesson = (lesson: Lesson) => {
+    if (!learningAccessIsCurrent()) {
+      setShowMembershipGate(true);
+      return;
+    }
+    setSelectedLessonId(lesson.id);
+  };
 
   const handleLoggedIn = (account: UserAccount) => {
     resetScrollPosition();
@@ -212,6 +296,8 @@ function App() {
     saveSession(account.id);
     setSessionUserId(account.id);
     setProgress(loadProgress(account.id));
+    setMembership(loadMembershipSnapshot(account.id));
+    setAiDecision(getUserAiDecision(account.id));
     setView("home");
   };
 
@@ -219,11 +305,17 @@ function App() {
     clearSession();
     setSessionUserId("");
     setProgress(null);
+    setMembership(null);
+    setAiDecision(null);
     setView("home");
   };
 
   const saveEvidenceDraft = (lesson: Lesson, draft: LessonEvidenceDraft) => {
-    if (!progress) return;
+    if (!progress || !learningAccessIsCurrent()) {
+      setSelectedLessonId("");
+      setShowMembershipGate(true);
+      return;
+    }
     const now = new Date().toISOString();
     const existing = progress.evidenceByLessonId[lesson.id];
     const nextProgress: LearningProgress = {
@@ -245,6 +337,11 @@ function App() {
 
   const completeLesson = (lesson: Lesson, draft: LessonEvidenceDraft) => {
     if (!progress || !evidenceCanSubmit(draft)) return;
+    if (!learningAccessIsCurrent()) {
+      setSelectedLessonId("");
+      setShowMembershipGate(true);
+      return;
+    }
     const alreadyRewarded = progress.completedLessonIds.includes(lesson.id);
     const now = new Date().toISOString();
     const oldLevel = getBuddyLevel(progress.xp);
@@ -290,6 +387,9 @@ function App() {
     );
   }
 
+  const currentMembership = membership ?? loadMembershipSnapshot(user.id);
+  const currentAiDecision = aiDecision ?? getUserAiDecision(user.id);
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -306,6 +406,7 @@ function App() {
           <NavButton active={view === "course"} icon={<BookOpen />} label={t("nav.course")} onClick={() => setView("course")} />
           <NavButton active={view === "journey"} icon={<Map />} label={t("nav.journey")} onClick={() => setView("journey")} />
           <NavButton active={view === "buddy"} icon={<Sparkles />} label={t("nav.buddy")} onClick={() => setView("buddy")} />
+          <NavButton active={view === "membership"} icon={<Crown />} label={t("nav.membership")} onClick={() => setView("membership")} />
           {user.role === "admin" && (
             <NavButton active={view === "admin"} icon={<UsersRound />} label={t("nav.admin")} onClick={() => setView("admin")} />
           )}
@@ -313,6 +414,7 @@ function App() {
 
         <div className="topbar-actions">
           <LanguageSwitcher compact />
+          <MembershipStatusButton membership={currentMembership} onClick={() => setView("membership")} />
           <button className="xp-pill" onClick={() => setView("buddy")}>
             <Zap size={15} /> {progress?.xp ?? 0} <span>{t("common.xp")}</span>
           </button>
@@ -332,6 +434,7 @@ function App() {
           <button onClick={() => setView("course")}><BookOpen />{t("nav.courseFull")}</button>
           <button onClick={() => setView("journey")}><Map />{t("nav.journey")}</button>
           <button onClick={() => setView("buddy")}><Sparkles />{t("nav.buddyFull")}</button>
+          <button onClick={() => setView("membership")}><Crown />{t("nav.membership")}</button>
           {user.role === "admin" && <button onClick={() => setView("admin")}><UsersRound />{t("nav.admin")}</button>}
           <button onClick={() => setView("profile")}><CircleUserRound />{t("nav.profile")}</button>
         </div>
@@ -365,17 +468,31 @@ function App() {
         {view === "buddy" && (
           <BuddyRoom progress={progress!} completed={completed} />
         )}
+        {view === "membership" && (
+          <MembershipPage
+            user={user}
+            membership={currentMembership}
+            aiDecision={currentAiDecision}
+            onMembershipChanged={() => refreshMembership(user.id)}
+            onToast={setToast}
+          />
+        )}
         {view === "admin" && (
           <RoleAdmin
             currentUser={user}
             accounts={accounts}
             onChange={updateAccounts}
+            onMembershipChanged={() => refreshMembership(user.id)}
+            onToast={setToast}
           />
         )}
         {view === "profile" && (
           <ProfilePage
             user={user}
             progress={progress!}
+            membership={currentMembership}
+            aiDecision={currentAiDecision}
+            onMembership={() => setView("membership")}
             onLogout={handleLogout}
             onReset={() => {
               const next = resetProgress(user.id);
@@ -402,9 +519,26 @@ function App() {
           completed={completed.includes(selectedLesson.id)}
           legacyCompleted={Boolean(progress?.completedLessonIds.includes(selectedLesson.id))}
           evidence={progress?.evidenceByLessonId[selectedLesson.id] ?? null}
+          aiDecision={currentAiDecision}
           onClose={() => setSelectedLessonId("")}
           onSaveDraft={(draft) => saveEvidenceDraft(selectedLesson, draft)}
           onComplete={(draft) => completeLesson(selectedLesson, draft)}
+          onUseAi={() => {
+            try {
+              const next = consumeAiToolRun(user.id);
+              setAiDecision(next);
+              return next;
+            } catch {
+              refreshMembership(user.id);
+              setSelectedLessonId("");
+              setShowMembershipGate(true);
+              return null;
+            }
+          }}
+          onMembershipRequired={() => {
+            setSelectedLessonId("");
+            setShowMembershipGate(true);
+          }}
         />
       )}
       {showPraise && user && (
@@ -414,6 +548,19 @@ function App() {
         }} />
       )}
       {reward && <RewardDialog reward={reward} onClose={() => setReward(null)} />}
+      {showMembershipGate && (
+        <MembershipGate
+          user={user}
+          membership={currentMembership}
+          aiDecision={currentAiDecision}
+          onClose={() => setShowMembershipGate(false)}
+          onMembershipChanged={() => {
+            refreshMembership(user.id);
+            setShowMembershipGate(false);
+          }}
+          onToast={setToast}
+        />
+      )}
       {toast && <div className="toast"><Check size={18} />{toast}</div>}
     </div>
   );
@@ -435,6 +582,252 @@ function LanguageSwitcher({ compact = false, inverted = false }: { compact?: boo
   );
 }
 
+function membershipName(tier: MembershipTier, t: (key: string, vars?: Record<string, string | number>) => string) {
+  return tier === "pro" ? t("membership.proName") : tier === "max" ? t("membership.maxName") : t("membership.freeName");
+}
+
+function formatMembershipDate(value: string | null, locale: string) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat(locale, { year: "numeric", month: "short", day: "numeric" }).format(new Date(value));
+}
+
+function MembershipStatusButton({ membership, onClick }: { membership: MembershipSnapshot; onClick: () => void }) {
+  const { t, locale } = useI18n();
+  const detail = membership.tier === "free"
+    ? t("membership.viewPlans")
+    : membership.expiresAt
+      ? t("membership.until", { date: formatMembershipDate(membership.expiresAt, locale) })
+      : t("membership.active");
+  return (
+    <button
+      className={`membership-status-pill ${membership.tier}`}
+      data-testid="membership-status"
+      data-membership-tier={membership.tier}
+      data-membership-expires-at={membership.expiresAt ?? ""}
+      onClick={onClick}
+    >
+      <Crown />
+      <span><b>{membershipName(membership.tier, t)}</b><small>{detail}</small></span>
+    </button>
+  );
+}
+
+function MembershipPage({
+  user,
+  membership,
+  aiDecision,
+  onMembershipChanged,
+  onToast,
+}: {
+  user: UserAccount;
+  membership: MembershipSnapshot;
+  aiDecision: AiUsageDecision;
+  onMembershipChanged: () => void;
+  onToast: (message: string) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="page membership-page">
+      <PageIntro kicker="KUAKUA MEMBERSHIP" title={t("membership.title")} description={t("membership.description")} />
+      <MembershipPanel user={user} membership={membership} aiDecision={aiDecision} onMembershipChanged={onMembershipChanged} onToast={onToast} />
+    </div>
+  );
+}
+
+function MembershipGate({
+  user,
+  membership,
+  aiDecision,
+  onClose,
+  onMembershipChanged,
+  onToast,
+}: {
+  user: UserAccount;
+  membership: MembershipSnapshot;
+  aiDecision: AiUsageDecision;
+  onClose: () => void;
+  onMembershipChanged: () => void;
+  onToast: (message: string) => void;
+}) {
+  const { t } = useI18n();
+  const dialogRef = useRef<HTMLElement>(null);
+  useEscape(onClose);
+  useDialogFocus(dialogRef);
+  return (
+    <div className="modal-backdrop membership-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section ref={dialogRef} className="membership-gate" role="dialog" aria-modal="true" aria-labelledby="membership-gate-title" data-testid="membership-gate">
+        <button className="dialog-close membership-close" onClick={onClose} aria-label={t("common.close")}><X /></button>
+        <header className="membership-gate-hero">
+          <span><Crown />{t("membership.gateKicker")}</span>
+          <h1 id="membership-gate-title">{t("membership.gateTitle")}</h1>
+          <p>{t("membership.gateDesc")}</p>
+        </header>
+        <MembershipPanel user={user} membership={membership} aiDecision={aiDecision} onMembershipChanged={onMembershipChanged} onToast={onToast} compact />
+      </section>
+    </div>
+  );
+}
+
+function MembershipPanel({
+  user,
+  membership,
+  aiDecision,
+  onMembershipChanged,
+  onToast,
+  compact = false,
+}: {
+  user: UserAccount;
+  membership: MembershipSnapshot;
+  aiDecision: AiUsageDecision;
+  onMembershipChanged: () => void;
+  onToast: (message: string) => void;
+  compact?: boolean;
+}) {
+  const { t, locale } = useI18n();
+  const [selectedPlanId, setSelectedPlanId] = useState<MembershipPlanId>("pro-monthly");
+  const [payerName, setPayerName] = useState(user.name);
+  const [paymentReference, setPaymentReference] = useState("");
+  const [orders, setOrders] = useState<PaymentOrder[]>(() => loadPaymentOrders().filter((order) => order.userId === user.id));
+  const [redeemCode, setRedeemCode] = useState("");
+  const [redeemFeedback, setRedeemFeedback] = useState("");
+  const [redeemBusy, setRedeemBusy] = useState(false);
+  const selectedPlan = MEMBERSHIP_PLANS[selectedPlanId];
+  const paymentQrUrl = `${import.meta.env.BASE_URL}__local/company-payment-qr.png`;
+  const localPaymentPreview = isLocalPreviewHost();
+  const currentAiText = aiDecision.mode === "unlimited"
+    ? t("membership.aiUnlimited")
+    : aiDecision.mode === "metered"
+      ? t("membership.aiRemaining", { count: aiDecision.remainingRuns ?? 0 })
+      : t("membership.aiBlocked");
+
+  const submitPayment = (event: FormEvent) => {
+    event.preventDefault();
+    if (!localPaymentPreview) {
+      onToast(t("payment.unavailable"));
+      return;
+    }
+    if (payerName.trim().length < 2) return;
+    try {
+      createPaymentOrder({ userId: user.id, planId: selectedPlanId, payerName, paymentReference });
+      setOrders(loadPaymentOrders().filter((item) => item.userId === user.id));
+      onToast(t("payment.submitted"));
+    } catch {
+      onToast(t("payment.duplicate"));
+    }
+  };
+
+  const submitRedemption = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!localPaymentPreview) {
+      onToast(t("payment.unavailable"));
+      return;
+    }
+    if (!redeemCode.trim()) return;
+    setRedeemBusy(true);
+    const allowDemoCode = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+    const result = await redeemMembershipCode({ userId: user.id, presentedCode: redeemCode, allowDemoCode });
+    setRedeemBusy(false);
+    if (result.ok) {
+      setRedeemFeedback(t("redeem.success"));
+      onToast(t("redeem.success"));
+      onMembershipChanged();
+      return;
+    }
+    const failureKey = result.reason === "already_redeemed"
+      ? "redeem.used"
+      : result.reason === "expired" || result.reason === "revoked"
+        ? "redeem.expired"
+        : result.reason === "not_found"
+          ? "redeem.notFound"
+          : "redeem.invalid";
+    setRedeemFeedback(t(failureKey));
+  };
+
+  return (
+    <div className={compact ? "membership-panel compact" : "membership-panel"}>
+      <section className={`membership-current ${membership.tier}`}>
+        <span className="membership-current-icon"><Crown /></span>
+        <div>
+          <small>{t("membership.current")}</small>
+          <h2>{membershipName(membership.tier, t)}</h2>
+          <p>{membership.tier === "free" ? t("membership.freeDesc") : membership.expiresAt ? t("membership.until", { date: formatMembershipDate(membership.expiresAt, locale) }) : t("membership.active")}</p>
+        </div>
+        <em>{currentAiText}</em>
+      </section>
+
+      <section className="membership-pricing" data-testid="membership-pricing">
+        <header><span>MEMBERSHIP PASSES</span><h2>{t("membership.pricingTitle")}</h2><p>{t("membership.pricingDesc")}</p></header>
+        <div className="plan-grid">
+          {membershipPlanList.map((plan) => (
+            <PlanCard key={plan.id} plan={plan} selected={selectedPlanId === plan.id} onSelect={() => setSelectedPlanId(plan.id)} />
+          ))}
+        </div>
+      </section>
+
+      <div className="membership-checkout-grid">
+        <section className="enterprise-payment-card" data-testid="enterprise-payment-code">
+          <div className="payment-card-copy">
+            <span><QrCode />{t("payment.account")}</span>
+            <h2>{t("payment.title")}</h2>
+            <p>{t("payment.description")}</p>
+            <div className="payment-selected-plan"><small>{t("payment.selected")}</small><b>{membershipName(selectedPlan.tier, t)} · ¥{selectedPlan.priceFen / 100}/{selectedPlan.billingPeriod === "month" ? t("membership.month") : t("membership.year")}</b></div>
+            <p className="enterprise-benefit"><Gift />{t("payment.enterpriseDiscount")}</p>
+          </div>
+          {localPaymentPreview ? (
+            <a className="payment-qr-frame" href={paymentQrUrl} target="_blank" rel="noreferrer" aria-label={t("payment.openQr")}>
+              <img src={paymentQrUrl} alt={t("payment.qrAlt")} />
+              <span>{t("payment.openQr")}<ArrowRight /></span>
+            </a>
+          ) : (
+            <div className="payment-qr-frame disabled payment-qr-locked" aria-label={t("payment.unavailable")}>
+              <LockKeyhole aria-hidden="true" />
+              <span>{t("payment.unavailable")}</span>
+            </div>
+          )}
+        </section>
+
+        <section className="payment-order-card">
+          <div className="checkout-heading"><ReceiptText /><span><small>MANUAL REVIEW</small><h2>{t("payment.submitTitle")}</h2></span></div>
+          <p className="payment-preview-warning"><ShieldCheck />{t("payment.previewWarning")}</p>
+          <form onSubmit={submitPayment}>
+            <label><span>{t("payment.payer")}</span><input data-testid="payment-payer-input" value={payerName} onChange={(event) => setPayerName(event.target.value)} maxLength={80} placeholder={t("payment.payerPlaceholder")} required /></label>
+            <label><span>{t("payment.reference")}</span><input data-testid="payment-reference-input" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} maxLength={80} placeholder={t("payment.referencePlaceholder")} /></label>
+            <button data-testid="payment-submit" className="primary-button payment-submit" disabled={!localPaymentPreview || payerName.trim().length < 2}><WalletCards />{localPaymentPreview ? t("payment.submit") : t("payment.unavailable")}</button>
+          </form>
+          {orders.length > 0 && <div className="user-orders"><span>{t("payment.orders")}</span>{orders.slice(0, 3).map((order) => <p key={order.id}><b>¥{order.amountFen / 100}</b><em className={order.status}>{t(`payment.status.${order.status}`)}</em><small>{new Date(order.createdAt).toLocaleDateString(locale)}</small></p>)}</div>}
+        </section>
+      </div>
+
+      <section className="redeem-card">
+        <div className="redeem-copy"><span><Gift /></span><div><small>ENTERPRISE BENEFIT</small><h2>{t("redeem.title")}</h2><p>{t("redeem.description")}</p></div></div>
+        <form onSubmit={submitRedemption}>
+          <input data-testid="redeem-code-input" value={redeemCode} onChange={(event) => { setRedeemCode(event.target.value); setRedeemFeedback(""); }} placeholder={t("redeem.placeholder")} autoCapitalize="characters" />
+          <button data-testid="redeem-code-submit" disabled={!localPaymentPreview || redeemBusy || !redeemCode.trim()}>{redeemBusy ? t("redeem.checking") : localPaymentPreview ? t("redeem.submit") : t("payment.unavailable")}<ArrowRight /></button>
+        </form>
+        {redeemFeedback && <p className="redeem-feedback" data-testid="redeem-code-feedback" role="status">{redeemFeedback}</p>}
+      </section>
+    </div>
+  );
+}
+
+function PlanCard({ plan, selected, onSelect }: { plan: MembershipPlan; selected: boolean; onSelect: () => void }) {
+  const { t } = useI18n();
+  const isMax = plan.tier === "max";
+  const period = plan.billingPeriod === "month" ? t("membership.month") : t("membership.year");
+  const benefits = isMax
+    ? [t("membership.maxBenefitCourse"), t("membership.maxBenefitAi"), t("membership.maxBenefitPriority")]
+    : [t("membership.proBenefitCourse"), t("membership.proBenefitAi", { count: PRO_AI_MONTHLY_RUN_LIMIT }), t("membership.proBenefitGrowth")];
+  return (
+    <button className={`plan-card ${plan.tier}${selected ? " selected" : ""}`} data-testid={`plan-${plan.id}`} onClick={onSelect} type="button">
+      <span className="plan-card-top"><em>{plan.tier.toUpperCase()}</em>{plan.billingPeriod === "year" && <b>{t("membership.bestValue")}</b>}{selected && <CheckCircle2 />}</span>
+      <span className="plan-price"><small>¥</small><strong>{plan.priceFen / 100}</strong><em>/{period}</em></span>
+      <span className="plan-name">{membershipName(plan.tier, t)} · {plan.billingPeriod === "month" ? t("membership.monthly") : t("membership.yearly")}</span>
+      <span className="plan-benefits">{benefits.map((benefit) => <span key={benefit}><Check />{benefit}</span>)}</span>
+      <span className="plan-select">{selected ? t("membership.selected") : t("membership.select")}<ArrowRight /></span>
+    </button>
+  );
+}
+
 function NavButton({ active, icon, label, onClick }: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
   return (
     <button className={active ? "nav-button active" : "nav-button"} onClick={onClick} aria-current={active ? "page" : undefined}>
@@ -453,6 +846,7 @@ function AuthScreen({
   onRegistered: (account: UserAccount) => void;
 }) {
   const { t } = useI18n();
+  const demoAccessEnabled = isLocalPreviewHost();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -533,11 +927,11 @@ function AuthScreen({
             <button className="primary-button auth-submit" disabled={busy}>{busy ? t("auth.entering") : mode === "login" ? t("auth.enterSpace") : t("auth.create")}<ArrowRight /></button>
           </form>
 
-          <div className="demo-divider"><span>{t("auth.try")}</span></div>
-          <div className="demo-buttons">
-            <button onClick={() => enterDemo("demo-learner")}><GraduationCap /><span><b>{t("auth.demoLearner")}</b><small>{t("auth.demoLearnerSub")}</small></span><ChevronRight /></button>
-            <button onClick={() => enterDemo("demo-admin")}><ShieldCheck /><span><b>{t("auth.demoAdmin")}</b><small>{t("auth.demoAdminSub")}</small></span><ChevronRight /></button>
-          </div>
+          {demoAccessEnabled && <><div className="demo-divider"><span>{t("auth.try")}</span></div>
+            <div className="demo-buttons">
+              <button onClick={() => enterDemo("demo-learner")}><GraduationCap /><span><b>{t("auth.demoLearner")}</b><small>{t("auth.demoLearnerSub")}</small></span><ChevronRight /></button>
+              <button onClick={() => enterDemo("demo-admin")}><ShieldCheck /><span><b>{t("auth.demoAdmin")}</b><small>{t("auth.demoAdminSub")}</small></span><ChevronRight /></button>
+            </div></>}
           <p className="local-auth-note"><LockKeyhole />{t("auth.localNote")}</p>
         </div>
         <p className="auth-footer">{t("auth.footer")}</p>
@@ -917,14 +1311,34 @@ function BuddyRoom({ progress, completed }: { progress: LearningProgress; comple
   );
 }
 
-function RoleAdmin({ currentUser, accounts, onChange }: { currentUser: UserAccount; accounts: UserAccount[]; onChange: (accounts: UserAccount[]) => void }) {
+function RoleAdmin({
+  currentUser,
+  accounts,
+  onChange,
+  onMembershipChanged,
+  onToast,
+}: {
+  currentUser: UserAccount;
+  accounts: UserAccount[];
+  onChange: (accounts: UserAccount[]) => void;
+  onMembershipChanged: () => void;
+  onToast: (message: string) => void;
+}) {
   const { t, roleLabel, roleDescription } = useI18n();
+  const [operationsRevision, setOperationsRevision] = useState(0);
+  const [enterpriseName, setEnterpriseName] = useState("");
+  const [codeCount, setCodeCount] = useState(1);
+  const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
+  const [generatingCodes, setGeneratingCodes] = useState(false);
   const progressList = loadAllProgress();
   if (currentUser.role !== "admin") {
     return <div className="page"><div className="locked-panel"><LockKeyhole /><h1>{t("admin.locked")}</h1><p>{t("admin.currentRole", { role: roleLabel(currentUser.role) })}</p></div></div>;
   }
   const activeCount = accounts.filter((item) => item.active).length;
   const learnerCount = accounts.filter((item) => item.role === "learner").length;
+  const paymentOrders = loadPaymentOrders();
+  const pendingOrders = paymentOrders.filter((order) => order.status === "pending");
+  const redemptionCodes = loadRedemptionCodes();
   const averageProgress = accounts.length
     ? Math.round(progressList.reduce((sum, item) => sum + evidencedLessonIds(item).length / allLessons.length, 0) / accounts.length * 100)
     : 0;
@@ -932,6 +1346,26 @@ function RoleAdmin({ currentUser, accounts, onChange }: { currentUser: UserAccou
   const patchAccount = (id: string, patch: Partial<UserAccount>) => {
     onChange(accounts.map((account) => account.id === id ? { ...account, ...patch } : account));
   };
+
+  const reviewOrder = (orderId: string, approve: boolean) => {
+    const reviewed = reviewPaymentOrder(orderId, currentUser.id, approve);
+    if (!reviewed) return;
+    setOperationsRevision((value) => value + 1);
+    onMembershipChanged();
+    onToast(approve ? t("admin.paymentApproved") : t("admin.paymentRejected"));
+  };
+
+  const generateCodes = async (event: FormEvent) => {
+    event.preventDefault();
+    setGeneratingCodes(true);
+    const batch = await createEnterpriseRedemptionCodes({ enterpriseName, count: codeCount });
+    setGeneratedCodes(batch.rawCodes);
+    setGeneratingCodes(false);
+    setOperationsRevision((value) => value + 1);
+    onToast(t("admin.codesCreated", { count: batch.rawCodes.length }));
+  };
+
+  void operationsRevision;
 
   return (
     <div className="page admin-page">
@@ -942,6 +1376,27 @@ function RoleAdmin({ currentUser, accounts, onChange }: { currentUser: UserAccou
         <StatCard icon={<GraduationCap />} value={`${learnerCount}`} label={t("admin.learners")} tone="gold" />
         <StatCard icon={<BarChart3 />} value={`${averageProgress}%`} label={t("admin.avgProgress")} tone="coral" />
       </div>
+      <section className="admin-membership-grid">
+        <article className="admin-payment-panel">
+          <header><span><ReceiptText /></span><div><small>PAYMENT REVIEW</small><h2>{t("admin.paymentReview")}</h2><p>{t("admin.paymentReviewDesc")}</p></div><em>{pendingOrders.length}</em></header>
+          <div className="admin-order-list">
+            {pendingOrders.length === 0 ? <p className="admin-empty"><CheckCircle2 />{t("admin.noPendingPayments")}</p> : pendingOrders.map((order) => {
+              const account = accounts.find((item) => item.id === order.userId);
+              const plan = MEMBERSHIP_PLANS[order.planId];
+              return <div className="admin-order" data-testid="admin-payment-order" key={order.id}><div><b>{account?.name ?? order.userId}</b><small>{order.payerName} · ¥{order.amountFen / 100} · {membershipName(plan.tier, t)}</small><em>{order.paymentReference || t("admin.noReference")}</em></div><span><button data-testid="admin-reject-payment" onClick={() => reviewOrder(order.id, false)}>{t("admin.reject")}</button><button data-testid="admin-approve-payment" onClick={() => reviewOrder(order.id, true)}><Check />{t("admin.approve")}</button></span></div>;
+            })}
+          </div>
+        </article>
+        <article className="admin-code-panel">
+          <header><span><Gift /></span><div><small>ENTERPRISE CODES</small><h2>{t("admin.enterpriseCodes")}</h2><p>{t("admin.enterpriseCodesDesc")}</p></div><em>{redemptionCodes.filter((code) => code.status === "issued" && code.campaignId !== "local-qa-demo").length}</em></header>
+          <form onSubmit={generateCodes}>
+            <label><span>{t("admin.enterpriseName")}</span><input data-testid="enterprise-name-input" value={enterpriseName} onChange={(event) => setEnterpriseName(event.target.value)} placeholder={t("admin.enterpriseNamePlaceholder")} maxLength={100} required /></label>
+            <label><span>{t("admin.codeSeats")}</span><input data-testid="enterprise-code-count" type="number" min={1} max={100} value={codeCount} onChange={(event) => setCodeCount(Number(event.target.value))} /></label>
+            <button data-testid="enterprise-code-generate" className="primary-button" disabled={generatingCodes || enterpriseName.trim().length < 2}><Gift />{generatingCodes ? t("admin.generating") : t("admin.generateCodes")}</button>
+          </form>
+          {generatedCodes.length > 0 && <div className="generated-code-batch"><div><b>{t("admin.generatedCodes")}</b><button onClick={() => navigator.clipboard?.writeText(generatedCodes.join("\n"))}><Clipboard />{t("admin.copyAll")}</button></div><textarea data-testid="generated-enterprise-codes" readOnly value={generatedCodes.join("\n")} /><p><ShieldCheck />{t("admin.codeSecurity")}</p></div>}
+        </article>
+      </section>
       <section className="admin-table-card">
         <div className="admin-table-heading"><div><h2>{t("admin.accountList")}</h2><p>{t("admin.roleImpact")}</p></div><span><ShieldCheck />{t("admin.leastPrivilege")}</span></div>
         <div className="account-table">
@@ -952,7 +1407,7 @@ function RoleAdmin({ currentUser, accounts, onChange }: { currentUser: UserAccou
             const self = account.id === currentUser.id;
             return (
               <div className="account-row" key={account.id}>
-                <div className="account-identity"><span>{account.name.slice(0, 1)}</span><div><b>{account.name}{self && <em>{t("admin.currentAccount")}</em>}</b><small>{account.email}</small></div></div>
+                <div className="account-identity"><span>{account.name.slice(0, 1)}</span><div><b>{account.name}{self && <em>{t("admin.currentAccount")}</em>}</b><small>{account.email}</small><small className="account-membership"><Crown />{membershipName(loadMembershipSnapshot(account.id).tier, t)}</small></div></div>
                 <div className="account-progress"><span>{done}/32 {t("common.lessons")}</span><ProgressBar value={(done / 32) * 100} /></div>
                 <label className="select-wrap"><span className="sr-only">{account.name} · {t("admin.role")}</span><select value={account.role} disabled={self} onChange={(event) => patchAccount(account.id, { role: event.target.value as UserRole })}><option value="learner">{roleLabel("learner")}</option><option value="mentor">{roleLabel("mentor")}</option><option value="admin">{roleLabel("admin")}</option></select></label>
                 <button className={account.active ? "status-toggle on" : "status-toggle"} disabled={self} onClick={() => patchAccount(account.id, { active: !account.active })}><span />{account.active ? t("admin.enabled") : t("admin.disabled")}</button>
@@ -968,7 +1423,23 @@ function RoleAdmin({ currentUser, accounts, onChange }: { currentUser: UserAccou
   );
 }
 
-function ProfilePage({ user, progress, onLogout, onReset }: { user: UserAccount; progress: LearningProgress; onLogout: () => void; onReset: () => void }) {
+function ProfilePage({
+  user,
+  progress,
+  membership,
+  aiDecision,
+  onMembership,
+  onLogout,
+  onReset,
+}: {
+  user: UserAccount;
+  progress: LearningProgress;
+  membership: MembershipSnapshot;
+  aiDecision: AiUsageDecision;
+  onMembership: () => void;
+  onLogout: () => void;
+  onReset: () => void;
+}) {
   const { t, roleLabel } = useI18n();
   const [confirmReset, setConfirmReset] = useState(false);
   const evidencedCount = evidencedLessonIds(progress).length;
@@ -983,6 +1454,7 @@ function ProfilePage({ user, progress, onLogout, onReset }: { user: UserAccount;
           <button className="outline-button full" onClick={onLogout}><LogOut />{t("profile.logout")}</button>
         </section>
         <div className="profile-settings">
+          <section className={`setting-card membership-setting ${membership.tier}`}><div className="setting-icon gold"><Crown /></div><div><h3>{membershipName(membership.tier, t)}</h3><p>{membership.tier === "free" ? t("membership.freeDesc") : aiDecision.mode === "unlimited" ? t("membership.aiUnlimited") : t("membership.aiRemaining", { count: aiDecision.remainingRuns ?? 0 })}</p></div><button onClick={onMembership}>{membership.tier === "free" ? t("membership.select") : t("membership.viewPlans")}</button></section>
           <section className="setting-card"><div className="setting-icon blue"><KeyRound /></div><div><h3>{t("profile.identity")}</h3><p>{t("profile.identityDesc", { role: roleLabel(user.role) })}</p></div><BadgeCheck /></section>
           <section className="setting-card"><div className="setting-icon coral"><LockKeyhole /></div><div><h3>{t("profile.storage")}</h3><p>{t("profile.storageDesc")}</p></div><span className="preview-badge">PREVIEW</span></section>
           <section className="setting-card danger"><div className="setting-icon"><RotateCcw /></div><div><h3>{t("profile.restart")}</h3><p>{t("profile.restartDesc")}</p></div>{confirmReset ? <div className="confirm-actions"><button onClick={() => setConfirmReset(false)}>{t("common.cancel")}</button><button onClick={() => { onReset(); setConfirmReset(false); }}>{t("profile.confirmClear")}</button></div> : <button className="danger-button" onClick={() => setConfirmReset(true)}>{t("profile.clear")}</button>}</section>
@@ -1008,17 +1480,23 @@ function LessonDialog({
   completed,
   legacyCompleted,
   evidence,
+  aiDecision,
   onClose,
   onSaveDraft,
   onComplete,
+  onUseAi,
+  onMembershipRequired,
 }: {
   lesson: Lesson;
   completed: boolean;
   legacyCompleted: boolean;
   evidence: LearningProgress["evidenceByLessonId"][string] | null;
+  aiDecision: AiUsageDecision;
   onClose: () => void;
   onSaveDraft: (draft: LessonEvidenceDraft) => void;
   onComplete: (draft: LessonEvidenceDraft) => void;
+  onUseAi: () => AiUsageDecision | null;
+  onMembershipRequired: () => void;
 }) {
   const { t, locale, direction, localizeLesson, localizeStage } = useI18n();
   const dialogRef = useRef<HTMLElement>(null);
@@ -1059,7 +1537,7 @@ function LessonDialog({
               {locale !== "zh-CN" && <span className="master-language-badge"><Globe2 />{t("lesson.chineseOriginal")}</span>}
               {tab === "books" && moduleGuide && <BookShelfPanel moduleGuide={moduleGuide} />}
               {tab === "case" && moduleGuide && <CasePanel lesson={displayLesson} moduleGuide={moduleGuide} guide={guide} />}
-              {tab === "ai" && guide && <AiCoachPanel lesson={displayLesson} guide={guide} />}
+              {tab === "ai" && guide && <AiCoachPanel lesson={displayLesson} guide={guide} aiDecision={aiDecision} onUseAi={onUseAi} onMembershipRequired={onMembershipRequired} />}
               {tab === "video" && moduleGuide && <VideoPanel moduleGuide={moduleGuide} />}
               {tab === "sources" && moduleGuide && <SourcesPanel lesson={displayLesson} moduleGuide={moduleGuide} />}
             </div>
@@ -1156,11 +1634,29 @@ function CasePanel({ lesson, moduleGuide, guide }: { lesson: Lesson; moduleGuide
   );
 }
 
-function AiCoachPanel({ lesson, guide }: { lesson: Lesson; guide: (typeof lessonGuides)[string] }) {
+function AiCoachPanel({
+  lesson,
+  guide,
+  aiDecision,
+  onUseAi,
+  onMembershipRequired,
+}: {
+  lesson: Lesson;
+  guide: (typeof lessonGuides)[string];
+  aiDecision: AiUsageDecision;
+  onUseAi: () => AiUsageDecision | null;
+  onMembershipRequired: () => void;
+}) {
+  const { t } = useI18n();
   const [context, setContext] = useState("");
   const [generated, setGenerated] = useState("");
   const [copied, setCopied] = useState(false);
   const runCoach = () => {
+    if (!aiDecision.allowed) {
+      onMembershipRequired();
+      return;
+    }
+    if (!onUseAi()) return;
     const clean = context.trim();
     const structuralNotes = [
       clean.length < 80 ? "材料偏短：请补充对象、最近一次具体事件与可核查证据。" : "材料长度足以开始结构审查。",
@@ -1176,9 +1672,14 @@ function AiCoachPanel({ lesson, guide }: { lesson: Lesson; guide: (typeof lesson
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   };
+  const usageText = aiDecision.mode === "unlimited"
+    ? `Max · ${t("membership.aiUnlimited")}`
+    : aiDecision.mode === "metered"
+      ? `PRO · ${t("membership.aiRemaining", { count: aiDecision.remainingRuns ?? 0 })}`
+      : `${t("membership.freeName")} · ${t("membership.aiBlocked")}`;
   return (
     <div className="course-panel ai-panel">
-      <header className="ai-panel-hero"><div><span><BrainCircuit />AI INTERACTIVE LAB</span><h2>{guide.aiLab.role}</h2><p>{guide.aiLab.goal}</p></div><div className="ai-privacy"><ShieldCheck /><span><b>本地生成，不上传材料</b><small>此预览版不调用外部模型；生成可复制的专业陪练提示与结构检查。</small></span></div></header>
+      <header className="ai-panel-hero"><div><span><BrainCircuit />AI INTERACTIVE LAB</span><h2>{guide.aiLab.role}</h2><p>{guide.aiLab.goal}</p><em className={`ai-usage-badge ${aiDecision.mode}`} data-testid="ai-usage-status"><Crown />{usageText}</em></div><div className="ai-privacy"><ShieldCheck /><span><b>本地生成，不上传材料</b><small>此预览版不调用外部模型；生成可复制的专业陪练提示与结构检查。</small></span></div></header>
       <div className="ai-workspace">
         <section><label htmlFor={`ai-context-${lesson.id}`}>粘贴你的真实项目材料</label><textarea id={`ai-context-${lesson.id}`} value={context} onChange={(event) => setContext(event.target.value)} placeholder={`例如：目标客户、最近一次具体项目、已有证据、限制与“${lesson.deliverable}”草稿……`} /><div className="ai-criteria"><span>本次教练会检查</span>{guide.aiLab.criteria.map((criterion) => <em key={criterion}><Check />{criterion}</em>)}</div><button className="primary-button ai-run" onClick={runCoach}><Sparkles />生成陪练任务</button></section>
         <section className={generated ? "ai-output ready" : "ai-output"} aria-live="polite"><div className="ai-output-head"><span><MessageSquareText />陪练提示词</span><button disabled={!generated} onClick={copyPrompt}>{copied ? <ClipboardCheck /> : <Clipboard />}{copied ? "已复制" : "复制到 AI"}</button></div>{generated ? <pre>{generated}</pre> : <div className="ai-empty"><BrainCircuit /><p>补充真实材料后，小晴会生成这节课专属的对练任务。</p><small>它会提醒证据缺口，但不会替你虚构客户、数据或经历。</small></div>}</section>
