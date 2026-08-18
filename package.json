@@ -1,19 +1,31 @@
 {
-  "name": "zhixing-ai-prototype",
+  "name": "kuakua-ai-platform",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "qa:links": "node tests/qa_links.mjs",
+    "qa:browser": "node tests/qa_browser.mjs",
+    "verify": "npm run build && npm run qa:links && npm run qa:browser"
   },
   "dependencies": {
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource-variable/newsreader": "^5.3.0",
+    "@fontsource-variable/noto-kufi-arabic": "^5.3.0",
+    "@fontsource-variable/noto-naskh-arabic": "^5.3.0",
+    "@fontsource-variable/noto-sans-arabic": "^5.3.0",
+    "@fontsource-variable/noto-sans-devanagari": "^5.3.0",
+    "@fontsource-variable/noto-serif-devanagari": "^5.3.0",
+    "@fontsource/noto-sans-sc": "^5.2.8",
+    "@fontsource/noto-serif-sc": "^5.2.8",
     "@vitejs/plugin-react": "latest",
     "lucide-react": "latest",
-    "vite": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/react": "latest",

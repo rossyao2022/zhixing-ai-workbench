@@ -9,10 +9,14 @@ vite.config.js
 vite.config.d.ts
 design-review/*.png
 design-review/screenshots/
+tests/artifacts/
+tests/__pycache__/
+*.pyc
+*.inspect.ndjson
 设计图/**/*.png
 
-# Internal product context and research. Keep these files locally, but never
-# include them in the shareable application repository.
+# Internal working notes. Keep these files locally, but never include them in
+# the shareable application repository.
 /AI 小白工作管家 PRD.md
 /PRD-学习平台需求评审-v1.md
 /内部附页-*.md
@@ -20,4 +24,5 @@ design-review/screenshots/
 /逐字稿-*.txt
 /design-review/
 /design-system/
+/ossutil_output/
 /设计图/
