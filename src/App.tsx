@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, RefObject, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, RefObject, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
@@ -72,7 +72,9 @@ import { localizeMethod, methodFrameworks, methodUi, workbenchLanes } from "./me
 import {
   MEMBERSHIP_PLANS,
   PRO_AI_MONTHLY_RUN_LIMIT,
+  getAiUsageDecision as getEmptyAiUsageDecision,
   membershipPlanList,
+  resolveMembership,
   type AiUsageDecision,
   type MembershipPlan,
   type MembershipPlanId,
@@ -91,6 +93,24 @@ import {
   reviewPaymentOrder,
   type PaymentOrder,
 } from "./membershipStorage";
+import {
+  ProductionApiError,
+  productionAdminCodeCount,
+  productionAdminGenerateCodes,
+  productionAdminPaymentOrders,
+  productionAdminReviewOrder,
+  productionApiEnabled,
+  productionConsumeAi,
+  productionContext,
+  productionCreatePaymentOrder,
+  productionLogin,
+  productionLogout,
+  productionMembership,
+  productionPaymentOrders,
+  productionPaymentQrObjectUrl,
+  productionRedeemCode,
+  productionRegister,
+} from "./productionApi";
 import {
   authenticate,
   clearSession,
@@ -156,11 +176,24 @@ function isLocalPreviewHost() {
   return window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
 }
 
+function freeMembershipState() {
+  return {
+    membership: resolveMembership(null),
+    aiDecision: getEmptyAiUsageDecision(null, null),
+  };
+}
+
+function productionErrorCode(reason: unknown) {
+  return reason instanceof ProductionApiError ? reason.code.toUpperCase() : "";
+}
+
 function App() {
   const { t, roleLabel } = useI18n();
-  const initialSession = loadSession();
+  const productionMode = productionApiEnabled();
+  const initialSession = productionMode ? "" : loadSession();
   const [accounts, setAccounts] = useState<UserAccount[]>(loadAccounts);
   const [sessionUserId, setSessionUserId] = useState(initialSession);
+  const [sessionRestoring, setSessionRestoring] = useState(productionMode);
   const [progress, setProgress] = useState<LearningProgress | null>(() =>
     initialSession ? loadProgress(initialSession) : null,
   );
@@ -172,15 +205,57 @@ function App() {
   const [toast, setToast] = useState("");
   const [showMembershipGate, setShowMembershipGate] = useState(false);
   const [membership, setMembership] = useState<MembershipSnapshot | null>(() =>
-    initialSession ? loadMembershipSnapshot(initialSession) : null,
+    initialSession && !productionMode ? loadMembershipSnapshot(initialSession) : null,
   );
   const [aiDecision, setAiDecision] = useState<AiUsageDecision | null>(() =>
-    initialSession ? getUserAiDecision(initialSession) : null,
+    initialSession && !productionMode ? getUserAiDecision(initialSession) : null,
   );
+  const membershipRequestRef = useRef(0);
 
   const user = accounts.find((account) => account.id === sessionUserId) ?? null;
   const today = localDateKey();
   const praise = user ? getDailyPraise(user.id, today) : "";
+
+  const cacheProductionAccount = useCallback((account: UserAccount) => {
+    const next = [...loadAccounts().filter((item) => item.id !== account.id), account];
+    saveAccounts(next);
+    setAccounts(next);
+  }, []);
+
+  const clearAuthenticatedState = useCallback(() => {
+    membershipRequestRef.current += 1;
+    clearSession();
+    setSessionUserId("");
+    setProgress(null);
+    setMembership(null);
+    setAiDecision(null);
+    setSelectedLessonId("");
+    setShowMembershipGate(false);
+    setView("home");
+  }, []);
+
+  useEffect(() => {
+    if (!productionMode) return;
+    let cancelled = false;
+    productionContext()
+      .then((context) => {
+        if (cancelled) return;
+        cacheProductionAccount(context.user);
+        saveSession(context.user.id);
+        setSessionUserId(context.user.id);
+        setMembership(context.membership);
+        setAiDecision(context.aiDecision);
+      })
+      .catch(() => {
+        if (!cancelled) clearAuthenticatedState();
+      })
+      .finally(() => {
+        if (!cancelled) setSessionRestoring(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheProductionAccount, clearAuthenticatedState, productionMode]);
 
   useEffect(() => {
     if (!sessionUserId) {
@@ -213,9 +288,11 @@ function App() {
     } else {
       setProgress(current);
     }
-    setMembership(loadMembershipSnapshot(sessionUserId));
-    setAiDecision(getUserAiDecision(sessionUserId));
-  }, [accounts, sessionUserId, today]);
+    if (!productionMode) {
+      setMembership(loadMembershipSnapshot(sessionUserId));
+      setAiDecision(getUserAiDecision(sessionUserId));
+    }
+  }, [accounts, productionMode, sessionUserId, today]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -238,11 +315,30 @@ function App() {
     };
   }, [sessionUserId, showPraise]);
 
+  const refreshMembership = useCallback(async (userId = sessionUserId) => {
+    if (!userId) return;
+    const requestId = ++membershipRequestRef.current;
+    if (!productionMode) {
+      setMembership(loadMembershipSnapshot(userId));
+      setAiDecision(getUserAiDecision(userId));
+      return;
+    }
+    try {
+      const current = await productionMembership();
+      if (requestId !== membershipRequestRef.current) return;
+      setMembership(current.membership);
+      setAiDecision(current.aiDecision);
+    } catch (reason) {
+      if (requestId !== membershipRequestRef.current) return;
+      if (reason instanceof ProductionApiError && reason.status === 401) clearAuthenticatedState();
+      throw reason;
+    }
+  }, [clearAuthenticatedState, productionMode, sessionUserId]);
+
   useEffect(() => {
     if (!sessionUserId) return;
     const refresh = () => {
-      setMembership(loadMembershipSnapshot(sessionUserId));
-      setAiDecision(getUserAiDecision(sessionUserId));
+      void refreshMembership(sessionUserId).catch(() => undefined);
     };
     const interval = window.setInterval(refresh, 60_000);
     const expiryDelay = membership?.expiresAt ? Date.parse(membership.expiresAt) - Date.now() + 50 : 0;
@@ -250,7 +346,7 @@ function App() {
       ? window.setTimeout(refresh, Math.min(expiryDelay, 2_147_000_000))
       : 0;
     const handleStorage = (event: StorageEvent) => {
-      if (event.key?.startsWith("kuakua-ai.")) refresh();
+      if (!productionMode && event.key?.startsWith("kuakua-ai.")) refresh();
     };
     window.addEventListener("storage", handleStorage);
     return () => {
@@ -258,7 +354,7 @@ function App() {
       if (expiryTimer) window.clearTimeout(expiryTimer);
       window.removeEventListener("storage", handleStorage);
     };
-  }, [membership?.expiresAt, sessionUserId]);
+  }, [membership?.expiresAt, productionMode, refreshMembership, sessionUserId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -271,17 +367,14 @@ function App() {
   const buddyLevel = getBuddyLevel(progress?.xp ?? 0);
   const nextLesson = allLessons.find((lesson) => !completed.includes(lesson.id)) ?? null;
   const selectedLesson = selectedLessonId ? allLessons.find((lesson) => lesson.id === selectedLessonId) ?? null : null;
-  const learningAccessIsCurrent = () => Boolean(user && loadMembershipSnapshot(user.id).benefits.canStartLearning);
+  const learningAccessIsCurrent = () => Boolean(
+    user && (productionMode ? membership?.benefits.canStartLearning : loadMembershipSnapshot(user.id).benefits.canStartLearning),
+  );
   useEffect(() => {
     if (!selectedLessonId || !user || membership?.benefits.canStartLearning) return;
     setSelectedLessonId("");
     setShowMembershipGate(true);
   }, [membership?.benefits.canStartLearning, selectedLessonId, user]);
-  const refreshMembership = (userId = sessionUserId) => {
-    if (!userId) return;
-    setMembership(loadMembershipSnapshot(userId));
-    setAiDecision(getUserAiDecision(userId));
-  };
   const openLesson = (lesson: Lesson) => {
     if (!learningAccessIsCurrent()) {
       setShowMembershipGate(true);
@@ -293,21 +386,28 @@ function App() {
   const handleLoggedIn = (account: UserAccount) => {
     resetScrollPosition();
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    if (productionMode) cacheProductionAccount(account);
     saveSession(account.id);
     setSessionUserId(account.id);
     setProgress(loadProgress(account.id));
-    setMembership(loadMembershipSnapshot(account.id));
-    setAiDecision(getUserAiDecision(account.id));
+    if (productionMode) {
+      const empty = freeMembershipState();
+      setMembership(empty.membership);
+      setAiDecision(empty.aiDecision);
+      void refreshMembership(account.id).catch(() => setToast(t("service.unavailable")));
+    } else {
+      setMembership(loadMembershipSnapshot(account.id));
+      setAiDecision(getUserAiDecision(account.id));
+    }
     setView("home");
   };
 
-  const handleLogout = () => {
-    clearSession();
-    setSessionUserId("");
-    setProgress(null);
-    setMembership(null);
-    setAiDecision(null);
-    setView("home");
+  const handleLogout = async () => {
+    try {
+      if (productionMode) await productionLogout();
+    } finally {
+      clearAuthenticatedState();
+    }
   };
 
   const saveEvidenceDraft = (lesson: Lesson, draft: LessonEvidenceDraft) => {
@@ -373,6 +473,14 @@ function App() {
     setToast(t("admin.roleUpdated"));
   };
 
+  if (sessionRestoring) {
+    return (
+      <main className="auth-screen">
+        <section className="auth-panel"><div className="auth-card"><div className="auth-heading"><span className="auth-icon">夸</span><div><h2>{t("auth.restoring")}</h2><p>{t("auth.restoringHint")}</p></div></div></div></section>
+      </main>
+    );
+  }
+
   if (!user) {
     return (
       <AuthScreen
@@ -387,8 +495,9 @@ function App() {
     );
   }
 
-  const currentMembership = membership ?? loadMembershipSnapshot(user.id);
-  const currentAiDecision = aiDecision ?? getUserAiDecision(user.id);
+  const emptyMembership = freeMembershipState();
+  const currentMembership = membership ?? (productionMode ? emptyMembership.membership : loadMembershipSnapshot(user.id));
+  const currentAiDecision = aiDecision ?? (productionMode ? emptyMembership.aiDecision : getUserAiDecision(user.id));
 
   return (
     <div className="app-shell">
@@ -523,15 +632,20 @@ function App() {
           onClose={() => setSelectedLessonId("")}
           onSaveDraft={(draft) => saveEvidenceDraft(selectedLesson, draft)}
           onComplete={(draft) => completeLesson(selectedLesson, draft)}
-          onUseAi={() => {
+          onUseAi={async () => {
             try {
-              const next = consumeAiToolRun(user.id);
+              const next = productionMode ? await productionConsumeAi() : consumeAiToolRun(user.id);
               setAiDecision(next);
               return next;
-            } catch {
-              refreshMembership(user.id);
-              setSelectedLessonId("");
-              setShowMembershipGate(true);
+            } catch (reason) {
+              void refreshMembership(user.id).catch(() => undefined);
+              const code = productionErrorCode(reason);
+              if (code === "MEMBERSHIP_REQUIRED" || code === "AI_QUOTA_EXHAUSTED" || (reason instanceof ProductionApiError && reason.status === 403)) {
+                setSelectedLessonId("");
+                setShowMembershipGate(true);
+              } else {
+                setToast(reason instanceof ProductionApiError && reason.status === 401 ? t("service.sessionExpired") : t("service.unavailable"));
+              }
               return null;
             }
           }}
@@ -622,7 +736,7 @@ function MembershipPage({
   user: UserAccount;
   membership: MembershipSnapshot;
   aiDecision: AiUsageDecision;
-  onMembershipChanged: () => void;
+  onMembershipChanged: () => void | Promise<void>;
   onToast: (message: string) => void;
 }) {
   const { t } = useI18n();
@@ -687,60 +801,138 @@ function MembershipPanel({
   const [selectedPlanId, setSelectedPlanId] = useState<MembershipPlanId>("pro-monthly");
   const [payerName, setPayerName] = useState(user.name);
   const [paymentReference, setPaymentReference] = useState("");
-  const [orders, setOrders] = useState<PaymentOrder[]>(() => loadPaymentOrders().filter((order) => order.userId === user.id));
+  const productionMode = productionApiEnabled();
+  const localPaymentPreview = isLocalPreviewHost();
+  const paymentEnabled = productionMode || localPaymentPreview;
+  const [orders, setOrders] = useState<PaymentOrder[]>(() => productionMode ? [] : loadPaymentOrders().filter((order) => order.userId === user.id));
+  const [paymentQrUrl, setPaymentQrUrl] = useState(() => localPaymentPreview ? `${import.meta.env.BASE_URL}__local/company-payment-qr.png` : "");
+  const [paymentQrError, setPaymentQrError] = useState("");
+  const [paymentServiceError, setPaymentServiceError] = useState("");
+  const [paymentBusy, setPaymentBusy] = useState(false);
   const [redeemCode, setRedeemCode] = useState("");
   const [redeemFeedback, setRedeemFeedback] = useState("");
   const [redeemBusy, setRedeemBusy] = useState(false);
   const selectedPlan = MEMBERSHIP_PLANS[selectedPlanId];
-  const paymentQrUrl = `${import.meta.env.BASE_URL}__local/company-payment-qr.png`;
-  const localPaymentPreview = isLocalPreviewHost();
+  const referenceIsValid = !productionMode || paymentReference.trim().length >= 4;
   const currentAiText = aiDecision.mode === "unlimited"
     ? t("membership.aiUnlimited")
     : aiDecision.mode === "metered"
       ? t("membership.aiRemaining", { count: aiDecision.remainingRuns ?? 0 })
       : t("membership.aiBlocked");
 
-  const submitPayment = (event: FormEvent) => {
+  useEffect(() => {
+    if (!productionMode) {
+      setOrders(loadPaymentOrders().filter((order) => order.userId === user.id));
+      return;
+    }
+    let cancelled = false;
+    let objectUrl = "";
+    setPaymentQrUrl("");
+    setPaymentServiceError("");
+    setPaymentQrError("");
+    void productionPaymentOrders()
+      .then((nextOrders) => {
+        if (!cancelled) setOrders(nextOrders);
+      })
+      .catch(() => {
+        if (!cancelled) setPaymentServiceError(t("payment.ordersUnavailable"));
+      });
+    void productionPaymentQrObjectUrl()
+      .then((nextQrUrl) => {
+        objectUrl = nextQrUrl;
+        if (cancelled) {
+          URL.revokeObjectURL(nextQrUrl);
+          return;
+        }
+        setPaymentQrUrl(nextQrUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setPaymentQrError(t("payment.qrUnavailable"));
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [productionMode, t, user.id]);
+
+  const submitPayment = async (event: FormEvent) => {
     event.preventDefault();
-    if (!localPaymentPreview) {
+    if (!paymentEnabled) {
       onToast(t("payment.unavailable"));
       return;
     }
-    if (payerName.trim().length < 2) return;
+    if (payerName.trim().length < 2 || !referenceIsValid || paymentBusy) return;
+    setPaymentBusy(true);
+    setPaymentServiceError("");
     try {
-      createPaymentOrder({ userId: user.id, planId: selectedPlanId, payerName, paymentReference });
-      setOrders(loadPaymentOrders().filter((item) => item.userId === user.id));
+      if (productionMode) {
+        await productionCreatePaymentOrder({
+          planId: selectedPlanId,
+          payerName: payerName.trim(),
+          paymentReference: paymentReference.trim(),
+        });
+        setOrders(await productionPaymentOrders());
+      } else {
+        createPaymentOrder({ userId: user.id, planId: selectedPlanId, payerName, paymentReference });
+        setOrders(loadPaymentOrders().filter((item) => item.userId === user.id));
+      }
+      setPaymentReference("");
       onToast(t("payment.submitted"));
-    } catch {
-      onToast(t("payment.duplicate"));
+    } catch (reason) {
+      const message = productionErrorCode(reason) === "PAYMENT_REFERENCE_EXISTS"
+        ? t("payment.duplicate")
+        : t("payment.error");
+      setPaymentServiceError(message);
+      onToast(message);
+    } finally {
+      setPaymentBusy(false);
     }
   };
 
   const submitRedemption = async (event: FormEvent) => {
     event.preventDefault();
-    if (!localPaymentPreview) {
+    if (!paymentEnabled) {
       onToast(t("payment.unavailable"));
       return;
     }
     if (!redeemCode.trim()) return;
     setRedeemBusy(true);
-    const allowDemoCode = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
-    const result = await redeemMembershipCode({ userId: user.id, presentedCode: redeemCode, allowDemoCode });
-    setRedeemBusy(false);
-    if (result.ok) {
+    try {
+      if (productionMode) {
+        await productionRedeemCode(redeemCode);
+      } else {
+        const result = await redeemMembershipCode({ userId: user.id, presentedCode: redeemCode, allowDemoCode: true });
+        if (!result.ok) {
+          const failureKey = result.reason === "already_redeemed"
+            ? "redeem.used"
+            : result.reason === "expired" || result.reason === "revoked"
+              ? "redeem.expired"
+              : result.reason === "not_found"
+                ? "redeem.notFound"
+                : "redeem.invalid";
+          setRedeemFeedback(t(failureKey));
+          return;
+        }
+      }
+      setRedeemCode("");
       setRedeemFeedback(t("redeem.success"));
       onToast(t("redeem.success"));
-      onMembershipChanged();
-      return;
+      await onMembershipChanged();
+    } catch (reason) {
+      const code = productionErrorCode(reason);
+      const failureKey = code === "REDEMPTION_CODE_USED"
+        ? "redeem.used"
+        : code === "REDEMPTION_CODE_EXPIRED" || code === "REDEMPTION_CODE_REVOKED"
+          ? "redeem.expired"
+          : code === "REDEMPTION_CODE_NOT_FOUND"
+            ? "redeem.notFound"
+            : code.startsWith("INVALID_")
+              ? "redeem.invalid"
+              : "redeem.error";
+      setRedeemFeedback(t(failureKey));
+    } finally {
+      setRedeemBusy(false);
     }
-    const failureKey = result.reason === "already_redeemed"
-      ? "redeem.used"
-      : result.reason === "expired" || result.reason === "revoked"
-        ? "redeem.expired"
-        : result.reason === "not_found"
-          ? "redeem.notFound"
-          : "redeem.invalid";
-    setRedeemFeedback(t(failureKey));
   };
 
   return (
@@ -773,27 +965,28 @@ function MembershipPanel({
             <div className="payment-selected-plan"><small>{t("payment.selected")}</small><b>{membershipName(selectedPlan.tier, t)} · ¥{selectedPlan.priceFen / 100}/{selectedPlan.billingPeriod === "month" ? t("membership.month") : t("membership.year")}</b></div>
             <p className="enterprise-benefit"><Gift />{t("payment.enterpriseDiscount")}</p>
           </div>
-          {localPaymentPreview ? (
+          {paymentQrUrl ? (
             <a className="payment-qr-frame" href={paymentQrUrl} target="_blank" rel="noreferrer" aria-label={t("payment.openQr")}>
               <img src={paymentQrUrl} alt={t("payment.qrAlt")} />
               <span>{t("payment.openQr")}<ArrowRight /></span>
             </a>
           ) : (
-            <div className="payment-qr-frame disabled payment-qr-locked" aria-label={t("payment.unavailable")}>
-              <LockKeyhole aria-hidden="true" />
-              <span>{t("payment.unavailable")}</span>
+            <div className="payment-qr-frame disabled payment-qr-locked" aria-label={!paymentEnabled ? t("payment.unavailable") : paymentQrError || t("payment.loadingQr")}>
+              {!paymentEnabled || paymentQrError ? <LockKeyhole aria-hidden="true" /> : <QrCode aria-hidden="true" />}
+              <span>{!paymentEnabled ? t("payment.unavailable") : paymentQrError || t("payment.loadingQr")}</span>
             </div>
           )}
         </section>
 
         <section className="payment-order-card">
           <div className="checkout-heading"><ReceiptText /><span><small>MANUAL REVIEW</small><h2>{t("payment.submitTitle")}</h2></span></div>
-          <p className="payment-preview-warning"><ShieldCheck />{t("payment.previewWarning")}</p>
+          <p className="payment-preview-warning"><ShieldCheck />{t(productionMode ? "payment.liveWarning" : "payment.previewWarning")}</p>
           <form onSubmit={submitPayment}>
             <label><span>{t("payment.payer")}</span><input data-testid="payment-payer-input" value={payerName} onChange={(event) => setPayerName(event.target.value)} maxLength={80} placeholder={t("payment.payerPlaceholder")} required /></label>
-            <label><span>{t("payment.reference")}</span><input data-testid="payment-reference-input" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} maxLength={80} placeholder={t("payment.referencePlaceholder")} /></label>
-            <button data-testid="payment-submit" className="primary-button payment-submit" disabled={!localPaymentPreview || payerName.trim().length < 2}><WalletCards />{localPaymentPreview ? t("payment.submit") : t("payment.unavailable")}</button>
+            <label><span>{t("payment.reference")}</span><input data-testid="payment-reference-input" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} minLength={productionMode ? 4 : undefined} maxLength={80} placeholder={t("payment.referencePlaceholder")} required={productionMode} /></label>
+            <button data-testid="payment-submit" className="primary-button payment-submit" disabled={!paymentEnabled || paymentBusy || (productionMode && !paymentQrUrl) || payerName.trim().length < 2 || !referenceIsValid}><WalletCards />{!paymentEnabled ? t("payment.unavailable") : paymentBusy ? t("payment.submitting") : t("payment.submit")}</button>
           </form>
+          {paymentServiceError && <p className="redeem-feedback" role="alert">{paymentServiceError}</p>}
           {orders.length > 0 && <div className="user-orders"><span>{t("payment.orders")}</span>{orders.slice(0, 3).map((order) => <p key={order.id}><b>¥{order.amountFen / 100}</b><em className={order.status}>{t(`payment.status.${order.status}`)}</em><small>{new Date(order.createdAt).toLocaleDateString(locale)}</small></p>)}</div>}
         </section>
       </div>
@@ -802,7 +995,7 @@ function MembershipPanel({
         <div className="redeem-copy"><span><Gift /></span><div><small>ENTERPRISE BENEFIT</small><h2>{t("redeem.title")}</h2><p>{t("redeem.description")}</p></div></div>
         <form onSubmit={submitRedemption}>
           <input data-testid="redeem-code-input" value={redeemCode} onChange={(event) => { setRedeemCode(event.target.value); setRedeemFeedback(""); }} placeholder={t("redeem.placeholder")} autoCapitalize="characters" />
-          <button data-testid="redeem-code-submit" disabled={!localPaymentPreview || redeemBusy || !redeemCode.trim()}>{redeemBusy ? t("redeem.checking") : localPaymentPreview ? t("redeem.submit") : t("payment.unavailable")}<ArrowRight /></button>
+          <button data-testid="redeem-code-submit" disabled={!paymentEnabled || redeemBusy || !redeemCode.trim()}>{!paymentEnabled ? t("payment.unavailable") : redeemBusy ? t("redeem.checking") : t("redeem.submit")}<ArrowRight /></button>
         </form>
         {redeemFeedback && <p className="redeem-feedback" data-testid="redeem-code-feedback" role="status">{redeemFeedback}</p>}
       </section>
@@ -847,6 +1040,7 @@ function AuthScreen({
 }) {
   const { t } = useI18n();
   const demoAccessEnabled = isLocalPreviewHost();
+  const productionMode = productionApiEnabled();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -861,17 +1055,33 @@ function AuthScreen({
     setBusy(true);
     try {
       if (mode === "login") {
-        const account = await authenticate(email, password);
+        const account = productionMode
+          ? await productionLogin(email.trim(), password)
+          : await authenticate(email, password);
         if (!account) throw new Error(t("auth.errorLogin"));
         onLogin(account);
       } else {
         if (name.trim().length < 2) throw new Error(t("auth.errorName"));
-        if (password.length < 8) throw new Error(t("auth.errorPassword"));
-        const account = await registerAccount({ name, email, password });
+        if (password.length < (productionMode ? 10 : 8)) throw new Error(t(productionMode ? "auth.errorPasswordProduction" : "auth.errorPassword"));
+        const account = productionMode
+          ? await productionRegister({ name: name.trim(), email: email.trim(), password })
+          : await registerAccount({ name, email, password });
         onRegistered(account);
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : t("auth.errorGeneric"));
+      const code = productionErrorCode(reason);
+      const message = code === "INVALID_CREDENTIALS" || code === "ACCOUNT_DISABLED" || (reason instanceof ProductionApiError && reason.status === 401)
+        ? t("auth.errorLogin")
+        : code === "EMAIL_EXISTS" || code === "EMAIL_ALREADY_EXISTS" || code === "EMAIL_IN_USE" || code === "INVALID_EMAIL"
+          ? t(code === "INVALID_EMAIL" ? "auth.errorEmail" : "auth.errorEmailExists")
+          : code === "INVALID_PASSWORD"
+            ? t("auth.errorPasswordProduction")
+          : reason instanceof ProductionApiError
+            ? t("service.unavailable")
+            : reason instanceof Error
+              ? reason.message
+              : t("auth.errorGeneric");
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -921,7 +1131,7 @@ function AuthScreen({
             <label><span>{t("auth.email")}</span><input dir="ltr" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" autoComplete="email" required /></label>
             <label>
               <span>{t("auth.password")}</span>
-              <div className="password-field"><input dir="ltr" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "register" ? t("auth.passwordNew") : t("auth.passwordEnter")} autoComplete={mode === "login" ? "current-password" : "new-password"} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={t("auth.passwordToggle")}>{showPassword ? <EyeOff /> : <Eye />}</button></div>
+              <div className="password-field"><input dir="ltr" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={mode === "register" ? productionMode ? 10 : 8 : undefined} maxLength={128} placeholder={mode === "register" ? t(productionMode ? "auth.passwordNewProduction" : "auth.passwordNew") : t("auth.passwordEnter")} autoComplete={mode === "login" ? "current-password" : "new-password"} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={t("auth.passwordToggle")}>{showPassword ? <EyeOff /> : <Eye />}</button></div>
             </label>
             {error && <p className="form-error" role="alert">{error}</p>}
             <button className="primary-button auth-submit" disabled={busy}>{busy ? t("auth.entering") : mode === "login" ? t("auth.enterSpace") : t("auth.create")}<ArrowRight /></button>
@@ -932,7 +1142,7 @@ function AuthScreen({
               <button onClick={() => enterDemo("demo-learner")}><GraduationCap /><span><b>{t("auth.demoLearner")}</b><small>{t("auth.demoLearnerSub")}</small></span><ChevronRight /></button>
               <button onClick={() => enterDemo("demo-admin")}><ShieldCheck /><span><b>{t("auth.demoAdmin")}</b><small>{t("auth.demoAdminSub")}</small></span><ChevronRight /></button>
             </div></>}
-          <p className="local-auth-note"><LockKeyhole />{t("auth.localNote")}</p>
+          <p className="local-auth-note"><LockKeyhole />{t(productionMode ? "auth.productionNote" : "auth.localNote")}</p>
         </div>
         <p className="auth-footer">{t("auth.footer")}</p>
       </section>
@@ -1334,6 +1544,9 @@ function RoleAdmin({
   if (currentUser.role !== "admin") {
     return <div className="page"><div className="locked-panel"><LockKeyhole /><h1>{t("admin.locked")}</h1><p>{t("admin.currentRole", { role: roleLabel(currentUser.role) })}</p></div></div>;
   }
+  if (productionApiEnabled()) {
+    return <ProductionRoleAdmin currentUser={currentUser} onMembershipChanged={onMembershipChanged} onToast={onToast} />;
+  }
   const activeCount = accounts.filter((item) => item.active).length;
   const learnerCount = accounts.filter((item) => item.role === "learner").length;
   const paymentOrders = loadPaymentOrders();
@@ -1423,6 +1636,121 @@ function RoleAdmin({
   );
 }
 
+function ProductionRoleAdmin({
+  currentUser,
+  onMembershipChanged,
+  onToast,
+}: {
+  currentUser: UserAccount;
+  onMembershipChanged: () => void | Promise<void>;
+  onToast: (message: string) => void;
+}) {
+  const { t, locale } = useI18n();
+  const [pendingOrders, setPendingOrders] = useState<PaymentOrder[]>([]);
+  const [issuedCodeCount, setIssuedCodeCount] = useState(0);
+  const [enterpriseName, setEnterpriseName] = useState("");
+  const [codeCount, setCodeCount] = useState(1);
+  const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [serviceError, setServiceError] = useState("");
+  const [reviewingOrderId, setReviewingOrderId] = useState("");
+  const [generatingCodes, setGeneratingCodes] = useState(false);
+  const requestRef = useRef(0);
+
+  const reloadOperations = useCallback(async () => {
+    const requestId = ++requestRef.current;
+    setLoading(true);
+    try {
+      const [orders, availableCodes] = await Promise.all([
+        productionAdminPaymentOrders("pending"),
+        productionAdminCodeCount(),
+      ]);
+      if (requestId !== requestRef.current) return;
+      setPendingOrders(orders);
+      setIssuedCodeCount(availableCodes);
+      setServiceError("");
+    } catch {
+      if (requestId === requestRef.current) setServiceError(t("admin.serviceError"));
+    } finally {
+      if (requestId === requestRef.current) setLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    void reloadOperations();
+    return () => {
+      requestRef.current += 1;
+    };
+  }, [reloadOperations]);
+
+  const reviewOrder = async (orderId: string, approve: boolean) => {
+    if (reviewingOrderId) return;
+    setReviewingOrderId(orderId);
+    setServiceError("");
+    try {
+      await productionAdminReviewOrder(orderId, approve);
+      setPendingOrders((current) => current.filter((order) => order.id !== orderId));
+      if (approve) await onMembershipChanged();
+      onToast(approve ? t("admin.paymentApproved") : t("admin.paymentRejected"));
+    } catch {
+      setServiceError(t("admin.serviceError"));
+      void reloadOperations();
+    } finally {
+      setReviewingOrderId("");
+    }
+  };
+
+  const generateCodes = async (event: FormEvent) => {
+    event.preventDefault();
+    if (generatingCodes || enterpriseName.trim().length < 2) return;
+    setGeneratingCodes(true);
+    setServiceError("");
+    try {
+      const codes = await productionAdminGenerateCodes({ enterpriseName: enterpriseName.trim(), count: codeCount });
+      setGeneratedCodes(codes);
+      setIssuedCodeCount((current) => current + codes.length);
+      onToast(t("admin.codesCreated", { count: codes.length }));
+    } catch {
+      setServiceError(t("admin.serviceError"));
+    } finally {
+      setGeneratingCodes(false);
+    }
+  };
+
+  return (
+    <div className="page admin-page">
+      <PageIntro kicker="PRODUCTION OPERATIONS" title={t("admin.productionTitle")} description={t("admin.productionDescription")} />
+      <div className="admin-stats">
+        <StatCard icon={<ShieldCheck />} value={currentUser.name} label={t("admin.currentOperator")} tone="blue" />
+        <StatCard icon={<ReceiptText />} value={`${pendingOrders.length}`} label={t("admin.pendingPayments")} tone="gold" />
+        <StatCard icon={<Gift />} value={`${issuedCodeCount}`} label={t("admin.availableCodes")} tone="green" />
+        <StatCard icon={loading ? <Clock3 /> : <BadgeCheck />} value={loading ? "…" : t("admin.connected")} label={t("admin.productionService")} tone="coral" />
+      </div>
+      {serviceError && <p className="form-error" role="alert">{serviceError} <button type="button" onClick={() => void reloadOperations()}>{t("admin.retry")}</button></p>}
+      <section className="admin-membership-grid">
+        <article className="admin-payment-panel">
+          <header><span><ReceiptText /></span><div><small>PAYMENT REVIEW</small><h2>{t("admin.paymentReview")}</h2><p>{t("admin.paymentReviewDesc")}</p></div><em>{pendingOrders.length}</em></header>
+          <div className="admin-order-list">
+            {loading ? <p className="admin-empty"><Clock3 />{t("admin.loading")}</p> : pendingOrders.length === 0 ? <p className="admin-empty"><CheckCircle2 />{t("admin.noPendingPayments")}</p> : pendingOrders.map((order) => {
+              const plan = MEMBERSHIP_PLANS[order.planId];
+              return <div className="admin-order" data-testid="admin-payment-order" key={order.id}><div><b>{order.payerName}</b><small>{order.userId} · ¥{order.amountFen / 100} · {plan ? membershipName(plan.tier, t) : order.planId}</small><em>{order.paymentReference || t("admin.noReference")} · {new Date(order.createdAt).toLocaleDateString(locale)}</em></div><span><button data-testid="admin-reject-payment" disabled={Boolean(reviewingOrderId)} onClick={() => void reviewOrder(order.id, false)}>{t("admin.reject")}</button><button data-testid="admin-approve-payment" disabled={Boolean(reviewingOrderId)} onClick={() => void reviewOrder(order.id, true)}><Check />{reviewingOrderId === order.id ? t("admin.reviewing") : t("admin.approve")}</button></span></div>;
+            })}
+          </div>
+        </article>
+        <article className="admin-code-panel">
+          <header><span><Gift /></span><div><small>ENTERPRISE CODES</small><h2>{t("admin.enterpriseCodes")}</h2><p>{t("admin.enterpriseCodesDesc")}</p></div><em>{issuedCodeCount}</em></header>
+          <form onSubmit={generateCodes}>
+            <label><span>{t("admin.enterpriseName")}</span><input data-testid="enterprise-name-input" value={enterpriseName} onChange={(event) => setEnterpriseName(event.target.value)} placeholder={t("admin.enterpriseNamePlaceholder")} maxLength={100} required /></label>
+            <label><span>{t("admin.codeSeats")}</span><input data-testid="enterprise-code-count" type="number" min={1} max={100} value={codeCount} onChange={(event) => setCodeCount(Math.min(100, Math.max(1, Number(event.target.value) || 1)))} /></label>
+            <button data-testid="enterprise-code-generate" className="primary-button" disabled={generatingCodes || enterpriseName.trim().length < 2}><Gift />{generatingCodes ? t("admin.generating") : t("admin.generateCodes")}</button>
+          </form>
+          {generatedCodes.length > 0 && <div className="generated-code-batch"><div><b>{t("admin.generatedCodes")}</b><button onClick={() => navigator.clipboard?.writeText(generatedCodes.join("\n"))}><Clipboard />{t("admin.copyAll")}</button></div><textarea data-testid="generated-enterprise-codes" readOnly value={generatedCodes.join("\n")} /><p><ShieldCheck />{t("admin.codeSecurity")}</p></div>}
+        </article>
+      </section>
+    </div>
+  );
+}
+
 function ProfilePage({
   user,
   progress,
@@ -1456,7 +1784,7 @@ function ProfilePage({
         <div className="profile-settings">
           <section className={`setting-card membership-setting ${membership.tier}`}><div className="setting-icon gold"><Crown /></div><div><h3>{membershipName(membership.tier, t)}</h3><p>{membership.tier === "free" ? t("membership.freeDesc") : aiDecision.mode === "unlimited" ? t("membership.aiUnlimited") : t("membership.aiRemaining", { count: aiDecision.remainingRuns ?? 0 })}</p></div><button onClick={onMembership}>{membership.tier === "free" ? t("membership.select") : t("membership.viewPlans")}</button></section>
           <section className="setting-card"><div className="setting-icon blue"><KeyRound /></div><div><h3>{t("profile.identity")}</h3><p>{t("profile.identityDesc", { role: roleLabel(user.role) })}</p></div><BadgeCheck /></section>
-          <section className="setting-card"><div className="setting-icon coral"><LockKeyhole /></div><div><h3>{t("profile.storage")}</h3><p>{t("profile.storageDesc")}</p></div><span className="preview-badge">PREVIEW</span></section>
+          <section className="setting-card"><div className="setting-icon coral"><LockKeyhole /></div><div><h3>{t("profile.storage")}</h3><p>{t(productionApiEnabled() ? "profile.productionStorageDesc" : "profile.storageDesc")}</p></div><span className="preview-badge">{productionApiEnabled() ? "LIVE" : "PREVIEW"}</span></section>
           <section className="setting-card danger"><div className="setting-icon"><RotateCcw /></div><div><h3>{t("profile.restart")}</h3><p>{t("profile.restartDesc")}</p></div>{confirmReset ? <div className="confirm-actions"><button onClick={() => setConfirmReset(false)}>{t("common.cancel")}</button><button onClick={() => { onReset(); setConfirmReset(false); }}>{t("profile.confirmClear")}</button></div> : <button className="danger-button" onClick={() => setConfirmReset(true)}>{t("profile.clear")}</button>}</section>
         </div>
       </div>
@@ -1495,7 +1823,7 @@ function LessonDialog({
   onClose: () => void;
   onSaveDraft: (draft: LessonEvidenceDraft) => void;
   onComplete: (draft: LessonEvidenceDraft) => void;
-  onUseAi: () => AiUsageDecision | null;
+  onUseAi: () => AiUsageDecision | null | Promise<AiUsageDecision | null>;
   onMembershipRequired: () => void;
 }) {
   const { t, locale, direction, localizeLesson, localizeStage } = useI18n();
@@ -1644,19 +1972,28 @@ function AiCoachPanel({
   lesson: Lesson;
   guide: (typeof lessonGuides)[string];
   aiDecision: AiUsageDecision;
-  onUseAi: () => AiUsageDecision | null;
+  onUseAi: () => AiUsageDecision | null | Promise<AiUsageDecision | null>;
   onMembershipRequired: () => void;
 }) {
   const { t } = useI18n();
   const [context, setContext] = useState("");
   const [generated, setGenerated] = useState("");
   const [copied, setCopied] = useState(false);
-  const runCoach = () => {
+  const [running, setRunning] = useState(false);
+  const runCoach = async () => {
     if (!aiDecision.allowed) {
       onMembershipRequired();
       return;
     }
-    if (!onUseAi()) return;
+    if (running) return;
+    setRunning(true);
+    let usage: AiUsageDecision | null = null;
+    try {
+      usage = await onUseAi();
+    } finally {
+      setRunning(false);
+    }
+    if (!usage) return;
     const clean = context.trim();
     const structuralNotes = [
       clean.length < 80 ? "材料偏短：请补充对象、最近一次具体事件与可核查证据。" : "材料长度足以开始结构审查。",
@@ -1681,7 +2018,7 @@ function AiCoachPanel({
     <div className="course-panel ai-panel">
       <header className="ai-panel-hero"><div><span><BrainCircuit />AI INTERACTIVE LAB</span><h2>{guide.aiLab.role}</h2><p>{guide.aiLab.goal}</p><em className={`ai-usage-badge ${aiDecision.mode}`} data-testid="ai-usage-status"><Crown />{usageText}</em></div><div className="ai-privacy"><ShieldCheck /><span><b>本地生成，不上传材料</b><small>此预览版不调用外部模型；生成可复制的专业陪练提示与结构检查。</small></span></div></header>
       <div className="ai-workspace">
-        <section><label htmlFor={`ai-context-${lesson.id}`}>粘贴你的真实项目材料</label><textarea id={`ai-context-${lesson.id}`} value={context} onChange={(event) => setContext(event.target.value)} placeholder={`例如：目标客户、最近一次具体项目、已有证据、限制与“${lesson.deliverable}”草稿……`} /><div className="ai-criteria"><span>本次教练会检查</span>{guide.aiLab.criteria.map((criterion) => <em key={criterion}><Check />{criterion}</em>)}</div><button className="primary-button ai-run" onClick={runCoach}><Sparkles />生成陪练任务</button></section>
+        <section><label htmlFor={`ai-context-${lesson.id}`}>粘贴你的真实项目材料</label><textarea id={`ai-context-${lesson.id}`} value={context} onChange={(event) => setContext(event.target.value)} placeholder={`例如：目标客户、最近一次具体项目、已有证据、限制与“${lesson.deliverable}”草稿……`} /><div className="ai-criteria"><span>本次教练会检查</span>{guide.aiLab.criteria.map((criterion) => <em key={criterion}><Check />{criterion}</em>)}</div><button className="primary-button ai-run" disabled={running} onClick={() => void runCoach()}><Sparkles />{running ? t("lesson.aiChecking") : "生成陪练任务"}</button></section>
         <section className={generated ? "ai-output ready" : "ai-output"} aria-live="polite"><div className="ai-output-head"><span><MessageSquareText />陪练提示词</span><button disabled={!generated} onClick={copyPrompt}>{copied ? <ClipboardCheck /> : <Clipboard />}{copied ? "已复制" : "复制到 AI"}</button></div>{generated ? <pre>{generated}</pre> : <div className="ai-empty"><BrainCircuit /><p>补充真实材料后，小晴会生成这节课专属的对练任务。</p><small>它会提醒证据缺口，但不会替你虚构客户、数据或经历。</small></div>}</section>
       </div>
     </div>

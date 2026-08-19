@@ -26,3 +26,6 @@ tests/__pycache__/
 /design-system/
 /ossutil_output/
 /设计图/
+
+# Production payment media stays outside the public source repository.
+/local-preview-assets/company-payment-qr.png

@@ -1,0 +1,35 @@
+[Unit]
+Description=Kuakua AI Membership API
+After=network.target
+
+[Service]
+Type=simple
+User=kuakua-api
+Group=kuakua-api
+WorkingDirectory=/opt/kuakua-ai-api/current
+EnvironmentFile=/etc/kuakua-ai-api/env
+StateDirectory=kuakua-ai-api
+StateDirectoryMode=0700
+ExecStartPre=/usr/bin/python3 -m server.app --check
+ExecStart=/usr/bin/python3 -m server.app
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
