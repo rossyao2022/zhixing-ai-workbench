@@ -16,20 +16,21 @@ def verify_deck(page, mobile=False):
     page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
     page.on("pageerror", lambda exc: page_errors.append(str(exc)))
     page.goto(BASE, wait_until="networkidle")
-    assert page.locator(".deck > .slide").count() == 30
+    assert page.locator(".deck > .slide").count() == 34
+    assert page.locator(".deck > .practice-slide").count() == 4
     assert page.locator(".deck > .slide.is-active").count() == 1
-    assert page.locator("#counter").inner_text().strip() == "01 / 30"
+    assert page.locator("#counter").inner_text().strip() == "01 / 34"
     assert page.locator(".slide.is-active h1").inner_text().strip() == "选对战场"
 
     page.locator("#nextBtn").click()
-    assert page.locator("#counter").inner_text().strip() == "02 / 30"
+    assert page.locator("#counter").inner_text().strip() == "02 / 34"
     page.keyboard.press("ArrowRight")
-    assert page.locator("#counter").inner_text().strip() == "03 / 30"
+    assert page.locator("#counter").inner_text().strip() == "03 / 34"
     page.keyboard.press("n")
     assert "2:00—3:00" in page.locator("#notesPanel").inner_text()
     page.keyboard.press("n")
     page.locator("#menuBtn").click()
-    assert page.locator("#slideMenu.is-open button").count() == 30
+    assert page.locator("#slideMenu.is-open button").count() == 34
     page.keyboard.press("Escape")
 
     page.evaluate("window.qingmiDeck.go(0)")
@@ -37,10 +38,16 @@ def verify_deck(page, mobile=False):
     page.screenshot(path=str(OUT / ("mobile-cover.png" if mobile else "desktop-cover.png")), full_page=True)
     page.evaluate("window.qingmiDeck.go(11)")
     page.wait_for_timeout(450)
-    page.screenshot(path=str(OUT / ("mobile-fit.png" if mobile else "desktop-fit.png")), full_page=True)
-    page.evaluate("window.qingmiDeck.go(18)")
+    page.screenshot(path=str(OUT / ("mobile-practice.png" if mobile else "desktop-practice.png")), full_page=True)
+    page.evaluate("window.qingmiDeck.go(20)")
     page.wait_for_timeout(450)
     page.screenshot(path=str(OUT / ("mobile-canvas.png" if mobile else "desktop-canvas.png")), full_page=True)
+
+    if not mobile:
+        for order, slide_index in enumerate((11, 14, 21, 25), start=1):
+            page.evaluate(f"window.qingmiDeck.go({slide_index})")
+            page.wait_for_timeout(450)
+            page.screenshot(path=str(OUT / f"desktop-practice-{order}.png"), full_page=True)
 
     if mobile:
         overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
@@ -71,7 +78,7 @@ with sync_playwright() as p:
 
 print(json.dumps({
     "status": "passed",
-    "slides": 30,
+    "slides": 34,
     "desktop": desktop_result,
     "mobile": mobile_result,
     "editor": editor_result,
