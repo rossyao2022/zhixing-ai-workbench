@@ -8,10 +8,18 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from server.app import Config, KuakuaServer, PLANS, initialize_database
+from server.app import (
+    Config,
+    DeepSeekProviderError,
+    KuakuaServer,
+    PLANS,
+    call_deepseek_coach,
+    initialize_database,
+)
 
 
 class ApiClient:
@@ -73,6 +81,7 @@ class MembershipApiTest(unittest.TestCase):
             allowed_origins=frozenset({self.origin}),
             password_iterations=210_000,
             cookie_secure=False,
+            deepseek_api_key="test-deepseek-key",
         )
         with mock.patch.dict(
             "os.environ",
@@ -127,6 +136,22 @@ class MembershipApiTest(unittest.TestCase):
         self.assertEqual(status, 201, document)
         assert isinstance(document, dict)
         return document["data"]["codes"]
+
+    def grant_membership(self, user_id: str, tier: str = "pro") -> None:
+        current = datetime.now(timezone.utc)
+        starts_at = (current - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        expires_at = (current + timedelta(days=31)).isoformat().replace("+00:00", "Z")
+        connection = sqlite3.connect(self.database_path)
+        try:
+            connection.execute(
+                """INSERT INTO membership_grants
+                   (id, user_id, tier, source, starts_at, expires_at, created_at)
+                   VALUES (?, ?, ?, 'manual_grant', ?, ?, ?)""",
+                (f"grant-{user_id}", user_id, tier, starts_at, expires_at, starts_at),
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
     def test_full_membership_payment_and_redemption_flow(self) -> None:
         status, health, _ = self.client.request("GET", "/kuakua-ai-api/health")
@@ -321,6 +346,197 @@ class MembershipApiTest(unittest.TestCase):
         self.assertEqual(PLANS["pro-yearly"]["amountFen"], 29_900)
         self.assertEqual(PLANS["max-monthly"]["amountFen"], 9_900)
         self.assertEqual(PLANS["max-yearly"]["amountFen"], 99_900)
+
+    def test_ai_coach_success_idempotency_and_provider_failure_rollback(self) -> None:
+        status, unauthorized, _ = self.client.request(
+            "POST", "/kuakua-ai-api/ai/coach", {}
+        )
+        self.assertEqual(status, 401, unauthorized)
+        self.assertEqual(unauthorized["error"]["code"], "UNAUTHORIZED")
+
+        learner_token, learner = self.register("coach@kuakua.test", "陪练学员")
+        request_body = {
+            "requestId": "coach-free-check",
+            "lessonId": "identity-01",
+            "lessonTitle": "超级个体责任边界",
+            "goal": "把项目任务分到本人、AI 与伙伴三类。",
+            "material": "这是免费用户提交的完整练习材料，长度足够但不应调用模型。",
+            "criteria": ["责任主体明确", "每项有可检查输出"],
+        }
+        with mock.patch("server.app.call_deepseek_coach") as provider:
+            status, blocked, _ = self.client.request(
+                "POST", "/kuakua-ai-api/ai/coach", request_body, token=learner_token
+            )
+        self.assertEqual(status, 403, blocked)
+        self.assertEqual(blocked["error"]["code"], "MEMBERSHIP_REQUIRED")
+        provider.assert_not_called()
+
+        self.grant_membership(learner["id"], "pro")
+        invalid_body = {**request_body, "requestId": "coach-invalid", "material": "太短"}
+        with mock.patch("server.app.call_deepseek_coach") as provider:
+            status, invalid, _ = self.client.request(
+                "POST", "/kuakua-ai-api/ai/coach", invalid_body, token=learner_token
+            )
+        self.assertEqual(status, 400, invalid)
+        self.assertEqual(invalid["error"]["code"], "INVALID_INPUT")
+        provider.assert_not_called()
+
+        private_marker = "PRIVATE-MATERIAL-DO-NOT-PERSIST-8842"
+        request_body.update(
+            {
+                "requestId": "coach-success-001",
+                "material": f"{private_marker}：我已列出客户承诺、执行动作和两条验收标准。",
+            }
+        )
+        answer = {
+            "acknowledgement": "你已经把客户承诺与执行动作分开，这是可靠的第一步。",
+            "strengths": ["责任对象明确", "已经出现可检查输出"],
+            "gaps": ["尚未定义失败升级条件"],
+            "questions": ["哪项决定一旦做错最难回退？"],
+            "nextAction": "用 15 分钟为两个委派项各补一条失败升级条件。",
+            "improvedDraft": "本人保留承诺与最终验收，AI 只整理证据。",
+            "rubric": [
+                {"label": "责任主体明确", "status": "met", "note": "已指定最终责任人"},
+                {"label": "每项有可检查输出", "status": "partial", "note": "仍缺失败条件"},
+            ],
+        }
+        with mock.patch(
+            "server.app.call_deepseek_coach",
+            return_value=(answer, "deepseek-v4-flash"),
+        ) as provider:
+            status, coached, _ = self.client.request(
+                "POST", "/kuakua-ai-api/ai/coach", request_body, token=learner_token
+            )
+        self.assertEqual(status, 200, coached)
+        self.assertEqual(coached["data"]["answer"], answer)
+        self.assertEqual(coached["data"]["model"], "deepseek-v4-flash")
+        self.assertEqual(coached["data"]["aiUsage"]["usedRuns"], 1)
+        self.assertEqual(coached["data"]["aiUsage"]["remainingRuns"], 99)
+        provider.assert_called_once()
+
+        connection = sqlite3.connect(self.database_path)
+        connection.row_factory = sqlite3.Row
+        try:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(ai_runs)")}
+            self.assertFalse(
+                columns.intersection({"material", "goal", "lesson_title", "answer", "answer_json"})
+            )
+            stored_run = dict(
+                connection.execute(
+                    "SELECT * FROM ai_runs WHERE user_id = ? AND request_id = ?",
+                    (learner["id"], "coach-success-001"),
+                ).fetchone()
+            )
+            self.assertEqual(stored_run["status"], "succeeded")
+            self.assertNotIn(private_marker, json.dumps(stored_run, ensure_ascii=False))
+        finally:
+            connection.close()
+
+        with mock.patch("server.app.call_deepseek_coach") as provider:
+            status, repeated, _ = self.client.request(
+                "POST", "/kuakua-ai-api/ai/coach", request_body, token=learner_token
+            )
+        self.assertEqual(status, 409, repeated)
+        self.assertEqual(repeated["error"]["code"], "AI_REQUEST_ALREADY_COMPLETED")
+        provider.assert_not_called()
+
+        failing_body = {
+            **request_body,
+            "requestId": "coach-retry-002",
+            "material": "另一份已脱敏材料：包含客户对象、发生时间和现有证据，准备接受反方检查。",
+        }
+        provider_error = DeepSeekProviderError(
+            503, "AI_PROVIDER_BUSY", "AI 教练当前繁忙，请稍后重试。"
+        )
+        with mock.patch("server.app.call_deepseek_coach", side_effect=provider_error):
+            status, failed, _ = self.client.request(
+                "POST", "/kuakua-ai-api/ai/coach", failing_body, token=learner_token
+            )
+        self.assertEqual(status, 503, failed)
+        self.assertEqual(failed["error"]["code"], "AI_PROVIDER_BUSY")
+
+        connection = sqlite3.connect(self.database_path)
+        connection.row_factory = sqlite3.Row
+        try:
+            usage = connection.execute(
+                "SELECT used_runs FROM ai_usage WHERE user_id = ?", (learner["id"],)
+            ).fetchone()
+            self.assertEqual(usage["used_runs"], 1)
+            failed_run = connection.execute(
+                "SELECT status, quota_reserved, error_code FROM ai_runs WHERE user_id = ? AND request_id = ?",
+                (learner["id"], "coach-retry-002"),
+            ).fetchone()
+            self.assertEqual(dict(failed_run), {
+                "status": "failed",
+                "quota_reserved": 0,
+                "error_code": "AI_PROVIDER_BUSY",
+            })
+        finally:
+            connection.close()
+
+        with mock.patch(
+            "server.app.call_deepseek_coach",
+            return_value=(answer, "deepseek-v4-flash"),
+        ):
+            status, retried, _ = self.client.request(
+                "POST", "/kuakua-ai-api/ai/coach", failing_body, token=learner_token
+            )
+        self.assertEqual(status, 200, retried)
+        self.assertEqual(retried["data"]["aiUsage"]["usedRuns"], 2)
+
+    def test_deepseek_provider_request_uses_v4_flash_and_structured_json(self) -> None:
+        provider_answer = {
+            "acknowledgement": "你已经给出真实对象与时间范围。",
+            "strengths": ["对象明确"],
+            "gaps": ["缺少证据链接"],
+            "questions": ["哪条记录可以直接核查？"],
+            "nextAction": "补上一条可核查记录。",
+            "rubric": [{"label": "证据", "status": "partial", "note": "有描述但无来源"}],
+        }
+        upstream = {
+            "model": "deepseek-v4-flash",
+            "choices": [{"message": {"content": json.dumps(provider_answer, ensure_ascii=False)}}],
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit: int) -> bytes:
+                return json.dumps(upstream, ensure_ascii=False).encode("utf-8")
+
+        captured_request: urllib.request.Request | None = None
+
+        def open_request(request: urllib.request.Request, timeout: int):
+            nonlocal captured_request
+            captured_request = request
+            self.assertEqual(timeout, 60)
+            return FakeResponse()
+
+        with mock.patch("server.app.urllib_request.urlopen", side_effect=open_request):
+            answer, model = call_deepseek_coach(
+                self.config,
+                user_id="usr_internal_123",
+                lesson_id="identity-01",
+                lesson_title="超级个体责任边界",
+                goal="形成责任边界",
+                material="真实材料中包含对象、时间和证据描述，但不包含任何密钥。",
+                criteria=["对象明确", "证据可核查"],
+                mode="review",
+            )
+        self.assertEqual(answer, provider_answer)
+        self.assertEqual(model, "deepseek-v4-flash")
+        assert captured_request is not None
+        sent = json.loads(captured_request.data.decode("utf-8"))
+        self.assertEqual(sent["model"], "deepseek-v4-flash")
+        self.assertEqual(sent["thinking"], {"type": "disabled"})
+        self.assertEqual(sent["response_format"], {"type": "json_object"})
+        self.assertTrue(sent["user_id"].startswith("kuakua_"))
+        self.assertNotIn("usr_internal_123", sent["user_id"])
+        self.assertEqual(captured_request.full_url, "https://api.deepseek.com/chat/completions")
 
     def test_cookie_session_is_http_only_and_logout_revokes_it(self) -> None:
         status, registered, headers = self.client.request(

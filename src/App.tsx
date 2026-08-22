@@ -18,6 +18,7 @@ import {
   Compass,
   Crown,
   FileText,
+  FolderOpen,
   ExternalLink,
   Eye,
   EyeOff,
@@ -38,7 +39,6 @@ import {
   NotebookPen,
   Orbit,
   Play,
-  Quote,
   QrCode,
   ReceiptText,
   RotateCcw,
@@ -50,7 +50,6 @@ import {
   Trophy,
   UserPlus,
   UsersRound,
-  Video,
   WalletCards,
   X,
   Zap,
@@ -61,10 +60,9 @@ import {
   buddyLevels,
   courseStages,
   getBuddyLevel,
-  getDailyPraise,
-  type CourseStage,
   type Lesson,
 } from "./courseData";
+import { loadLearningPoint, saveLearningPoint, type LearningPhase } from "./learningState";
 import { lessonGuides, moduleGuides } from "./learningContent";
 import { eightImmortals, immortalByStage } from "./eightImmortals";
 import { localeOptions, useI18n } from "./i18n";
@@ -100,9 +98,9 @@ import {
   productionAdminPaymentOrders,
   productionAdminReviewOrder,
   productionApiEnabled,
-  productionConsumeAi,
   productionContext,
   productionCreatePaymentOrder,
+  productionDeepSeekCoach,
   productionLogin,
   productionLogout,
   productionMembership,
@@ -110,6 +108,8 @@ import {
   productionPaymentQrObjectUrl,
   productionRedeemCode,
   productionRegister,
+  type DeepSeekCoachRequest,
+  type DeepSeekCoachResponse,
 } from "./productionApi";
 import {
   authenticate,
@@ -187,6 +187,42 @@ function productionErrorCode(reason: unknown) {
   return reason instanceof ProductionApiError ? reason.code.toUpperCase() : "";
 }
 
+function createRequestId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `coach-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function localCoachPreview(input: DeepSeekCoachRequest, decision: AiUsageDecision): DeepSeekCoachResponse {
+  const material = input.material.trim();
+  const hasEvidence = /证据|数据|访谈|记录|链接|作品|客户/.test(material);
+  const hasThreshold = /\d|次|天|周|元|人|%/.test(material);
+  const strengths = [
+    material.length >= 80 ? "你已经提供了足够具体的项目背景。" : "你已经开始把自己的项目带进练习，而不是停留在听课。",
+  ];
+  if (hasEvidence) strengths.push("材料中出现了可核验线索，可以继续追问来源和范围。");
+  const gaps = [
+    ...(!hasEvidence ? ["还缺少一条能被他人核验的事实或材料。"] : []),
+    ...(!hasThreshold ? ["还没有明确时间、数量或通过阈值。"] : []),
+  ];
+  if (!gaps.length) gaps.push("下一步要检查这些证据是否真的支持当前结论，而不是只与结论相关。");
+  return {
+    model: "local-preview",
+    aiDecision: decision,
+    answer: {
+      acknowledgement: "你已经把真实材料放到桌面上了，这比让 AI 凭空猜测更专业。",
+      strengths,
+      gaps,
+      questions: [hasEvidence ? "哪一条证据最可能推翻你现在的判断？" : "最近一次真实发生这件事的人是谁，当时发生了什么？"],
+      nextAction: hasThreshold ? "用 15 分钟找到一个反例，并记录它会怎样改变你的决定。" : "补充一个 14 天内可观察的通过阈值和停止条件。",
+      rubric: input.criteria.slice(0, 3).map((label, index) => ({
+        label,
+        status: index === 0 && material.length >= 80 ? "met" : hasEvidence ? "partial" : "missing",
+        note: index === 0 && material.length >= 80 ? "已有具体材料支撑。" : "需要补一条可核验事实。",
+      })),
+    },
+  };
+}
+
 function App() {
   const { t, roleLabel } = useI18n();
   const productionMode = productionApiEnabled();
@@ -199,7 +235,6 @@ function App() {
   );
   const [view, setView] = useState<AppView>("home");
   const [selectedLessonId, setSelectedLessonId] = useState("");
-  const [showPraise, setShowPraise] = useState(false);
   const [reward, setReward] = useState<{ xp: number; levelUp: number } | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [toast, setToast] = useState("");
@@ -214,7 +249,6 @@ function App() {
 
   const user = accounts.find((account) => account.id === sessionUserId) ?? null;
   const today = localDateKey();
-  const praise = user ? getDailyPraise(user.id, today) : "";
 
   const cacheProductionAccount = useCallback((account: UserAccount) => {
     const next = [...loadAccounts().filter((item) => item.id !== account.id), account];
@@ -284,7 +318,6 @@ function App() {
       };
       saveProgress(next);
       setProgress(next);
-      setShowPraise(current.lastPraiseDate !== today);
     } else {
       setProgress(current);
     }
@@ -305,7 +338,7 @@ function App() {
   }, [sessionUserId]);
 
   useEffect(() => {
-    if (!sessionUserId || showPraise) return;
+    if (!sessionUserId) return;
     resetScrollPosition();
     const frame = window.requestAnimationFrame(resetScrollPosition);
     const timer = window.setTimeout(resetScrollPosition, 60);
@@ -313,7 +346,7 @@ function App() {
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [sessionUserId, showPraise]);
+  }, [sessionUserId]);
 
   const refreshMembership = useCallback(async (userId = sessionUserId) => {
     if (!userId) return;
@@ -370,16 +403,7 @@ function App() {
   const learningAccessIsCurrent = () => Boolean(
     user && (productionMode ? membership?.benefits.canStartLearning : loadMembershipSnapshot(user.id).benefits.canStartLearning),
   );
-  useEffect(() => {
-    if (!selectedLessonId || !user || membership?.benefits.canStartLearning) return;
-    setSelectedLessonId("");
-    setShowMembershipGate(true);
-  }, [membership?.benefits.canStartLearning, selectedLessonId, user]);
   const openLesson = (lesson: Lesson) => {
-    if (!learningAccessIsCurrent()) {
-      setShowMembershipGate(true);
-      return;
-    }
     setSelectedLessonId(lesson.id);
   };
 
@@ -498,6 +522,24 @@ function App() {
   const emptyMembership = freeMembershipState();
   const currentMembership = membership ?? (productionMode ? emptyMembership.membership : loadMembershipSnapshot(user.id));
   const currentAiDecision = aiDecision ?? (productionMode ? emptyMembership.aiDecision : getUserAiDecision(user.id));
+  const runDeepSeekCoach = async (input: DeepSeekCoachRequest): Promise<DeepSeekCoachResponse | null> => {
+    try {
+      const result = productionMode
+        ? await productionDeepSeekCoach(input)
+        : localCoachPreview(input, consumeAiToolRun(user.id));
+      setAiDecision(result.aiDecision);
+      return result;
+    } catch (reason) {
+      void refreshMembership(user.id).catch(() => undefined);
+      const code = productionErrorCode(reason);
+      if (code === "MEMBERSHIP_REQUIRED" || code === "AI_QUOTA_EXHAUSTED" || (reason instanceof ProductionApiError && reason.status === 403)) {
+        setShowMembershipGate(true);
+      } else {
+        setToast(reason instanceof ProductionApiError && reason.status === 401 ? t("service.sessionExpired") : t("service.unavailable"));
+      }
+      return null;
+    }
+  };
 
   return (
     <div className="app-shell">
@@ -549,35 +591,45 @@ function App() {
         </div>
       )}
 
-      <main className="app-main">
-        {view === "home" && (
+      <main className={selectedLesson ? "app-main learning-main" : "app-main"}>
+        {selectedLesson ? (
+          <LessonDialog
+            key={selectedLesson.id}
+            userId={user.id}
+            lesson={selectedLesson}
+            completed={completed.includes(selectedLesson.id)}
+            legacyCompleted={Boolean(progress?.completedLessonIds.includes(selectedLesson.id))}
+            evidence={progress?.evidenceByLessonId[selectedLesson.id] ?? null}
+            aiDecision={currentAiDecision}
+            canPractice={currentMembership.benefits.canStartLearning}
+            onClose={() => setSelectedLessonId("")}
+            onSaveDraft={(draft) => saveEvidenceDraft(selectedLesson, draft)}
+            onComplete={(draft) => completeLesson(selectedLesson, draft)}
+            onRunCoach={runDeepSeekCoach}
+            onMembershipRequired={() => setShowMembershipGate(true)}
+          />
+        ) : view === "home" ? (
           <Dashboard
             user={user}
             progress={progress!}
             completed={completed}
-            praise={praise}
             buddyLevel={buddyLevel}
             nextLesson={nextLesson}
             progressPercent={progressPercent}
             onOpenLesson={openLesson}
             onNavigate={setView}
-            onPraise={() => setShowPraise(true)}
           />
-        )}
-        {view === "course" && (
+        ) : view === "course" ? (
           <CourseCenter
             completed={completed}
             progressPercent={progressPercent}
             onOpenLesson={openLesson}
           />
-        )}
-        {view === "journey" && (
+        ) : view === "journey" ? (
           <JourneyMap completed={completed} onOpenLesson={openLesson} />
-        )}
-        {view === "buddy" && (
+        ) : view === "buddy" ? (
           <BuddyRoom progress={progress!} completed={completed} />
-        )}
-        {view === "membership" && (
+        ) : view === "membership" ? (
           <MembershipPage
             user={user}
             membership={currentMembership}
@@ -585,8 +637,7 @@ function App() {
             onMembershipChanged={() => refreshMembership(user.id)}
             onToast={setToast}
           />
-        )}
-        {view === "admin" && (
+        ) : view === "admin" ? (
           <RoleAdmin
             currentUser={user}
             accounts={accounts}
@@ -594,8 +645,7 @@ function App() {
             onMembershipChanged={() => refreshMembership(user.id)}
             onToast={setToast}
           />
-        )}
-        {view === "profile" && (
+        ) : view === "profile" ? (
           <ProfilePage
             user={user}
             progress={progress!}
@@ -609,58 +659,17 @@ function App() {
               setToast(t("profile.resetDone"));
             }}
           />
-        )}
+        ) : null}
       </main>
 
-      <nav className={user.role === "admin" ? "bottom-nav admin-nav" : "bottom-nav"} aria-label={t("nav.mobile")}>
+      {!selectedLesson && <nav className={user.role === "admin" ? "bottom-nav admin-nav" : "bottom-nav"} aria-label={t("nav.mobile")}>
         <NavButton active={view === "home"} icon={<Home />} label={t("nav.today")} onClick={() => setView("home")} />
         <NavButton active={view === "course"} icon={<BookOpen />} label={t("nav.course")} onClick={() => setView("course")} />
         <NavButton active={view === "journey"} icon={<Map />} label={t("nav.mapShort")} onClick={() => setView("journey")} />
         <NavButton active={view === "buddy"} icon={<Sparkles />} label={t("nav.buddy")} onClick={() => setView("buddy")} />
         {user.role === "admin" && <NavButton active={view === "admin"} icon={<UsersRound />} label={t("nav.adminShort")} onClick={() => setView("admin")} />}
         <NavButton active={view === "profile"} icon={<CircleUserRound />} label={t("nav.mine")} onClick={() => setView("profile")} />
-      </nav>
-
-      {selectedLesson && (
-        <LessonDialog
-          key={selectedLesson.id}
-          lesson={selectedLesson}
-          completed={completed.includes(selectedLesson.id)}
-          legacyCompleted={Boolean(progress?.completedLessonIds.includes(selectedLesson.id))}
-          evidence={progress?.evidenceByLessonId[selectedLesson.id] ?? null}
-          aiDecision={currentAiDecision}
-          onClose={() => setSelectedLessonId("")}
-          onSaveDraft={(draft) => saveEvidenceDraft(selectedLesson, draft)}
-          onComplete={(draft) => completeLesson(selectedLesson, draft)}
-          onUseAi={async () => {
-            try {
-              const next = productionMode ? await productionConsumeAi() : consumeAiToolRun(user.id);
-              setAiDecision(next);
-              return next;
-            } catch (reason) {
-              void refreshMembership(user.id).catch(() => undefined);
-              const code = productionErrorCode(reason);
-              if (code === "MEMBERSHIP_REQUIRED" || code === "AI_QUOTA_EXHAUSTED" || (reason instanceof ProductionApiError && reason.status === 403)) {
-                setSelectedLessonId("");
-                setShowMembershipGate(true);
-              } else {
-                setToast(reason instanceof ProductionApiError && reason.status === 401 ? t("service.sessionExpired") : t("service.unavailable"));
-              }
-              return null;
-            }
-          }}
-          onMembershipRequired={() => {
-            setSelectedLessonId("");
-            setShowMembershipGate(true);
-          }}
-        />
-      )}
-      {showPraise && user && (
-        <PraiseDialog user={user} praise={praise} streak={progress?.streak ?? 1} onClose={() => {
-          setShowPraise(false);
-          window.requestAnimationFrame(resetScrollPosition);
-        }} />
-      )}
+      </nav>}
       {reward && <RewardDialog reward={reward} onClose={() => setReward(null)} />}
       {showMembershipGate && (
         <MembershipGate
@@ -1154,109 +1163,102 @@ function Dashboard({
   user,
   progress,
   completed,
-  praise,
   buddyLevel,
   nextLesson,
   progressPercent,
   onOpenLesson,
   onNavigate,
-  onPraise,
 }: {
   user: UserAccount;
   progress: LearningProgress;
   completed: string[];
-  praise: string;
   buddyLevel: ReturnType<typeof getBuddyLevel>;
   nextLesson: (Lesson & { stageId: string; stageTitle: string }) | null;
   progressPercent: number;
   onOpenLesson: (lesson: Lesson) => void;
   onNavigate: (view: AppView) => void;
-  onPraise: () => void;
 }) {
-  const { t, localizeStage, localizeImmortal, localizeLesson, localizeBuddy, localizePraise } = useI18n();
+  const { t, localizeStage, localizeLesson, localizeBuddy } = useI18n();
   const completedCount = completed.length;
-  const currentLevelIndex = buddyLevels.findIndex((item) => item.level === buddyLevel.level);
-  const nextLevel = buddyLevels[currentLevelIndex + 1];
-  const levelProgress = nextLevel
-    ? clamp(((progress.xp - buddyLevel.min) / (nextLevel.min - buddyLevel.min)) * 100)
-    : 100;
   const displayLevel = localizeBuddy(buddyLevel);
-  const displayNextLevel = nextLevel ? localizeBuddy(nextLevel) : null;
-  const displayNextLesson = nextLesson ? localizeLesson(nextLesson) : null;
+  const savedPoint = loadLearningPoint(user.id);
+  const savedLesson = savedPoint ? allLessons.find((lesson) => lesson.id === savedPoint.lessonId) ?? null : null;
+  const focusLesson = savedLesson && !completed.includes(savedLesson.id) ? savedLesson : nextLesson;
+  const displayFocusLesson = focusLesson ? localizeLesson(focusLesson) : null;
+  const focusPhase = savedLesson?.id === focusLesson?.id ? savedPoint?.phase ?? "concept" : "concept";
+  const latestEvidenceEntry = Object.entries(progress.evidenceByLessonId)
+    .filter(([, item]) => Boolean(item?.submittedAt))
+    .sort(([, left], [, right]) => Date.parse(right?.submittedAt ?? "") - Date.parse(left?.submittedAt ?? ""))
+    .at(0);
+  const latestEvidenceLesson = latestEvidenceEntry
+    && localDateKey(new Date(latestEvidenceEntry[1]?.submittedAt ?? "")) === localDateKey()
+    ? allLessons.find((lesson) => lesson.id === latestEvidenceEntry[0])
+    : undefined;
+  const praiseReason = latestEvidenceLesson ? "evidence" : savedPoint ? "phase" : completedCount > 0 ? "progress" : progress.streak > 1 ? "streak" : "welcome";
+  const praiseText = latestEvidenceLesson
+    ? t("dashboard.praiseEvidence", { title: localizeLesson(latestEvidenceLesson).title })
+    : savedPoint && savedLesson
+      ? t("dashboard.praisePhase", { title: localizeLesson(savedLesson).title, phase: t(`learning.phase.${savedPoint.phase}`) })
+      : completedCount > 0
+      ? t("dashboard.praiseProgress", { count: completedCount })
+      : progress.streak > 1
+        ? t("dashboard.praiseStreak", { count: progress.streak })
+        : t("dashboard.praiseWelcome");
+  const focusStage = focusLesson
+    ? courseStages.find((stage) => stage.lessons.some((lesson) => lesson.id === focusLesson.id))
+    : null;
 
   return (
-    <div className="page dashboard-page">
-      <section className="dashboard-hero">
-        <div className="hero-copy">
-          <span className="eyebrow"><Sparkles size={15} />{t("dashboard.eyebrow")}</span>
-          <h1>{timeGreeting(t)}，{user.name}<br /><span>{t("dashboard.heroLine")}</span></h1>
-          <p>{t("dashboard.description")}</p>
-          <div className="hero-actions">
-            {nextLesson && displayNextLesson ? (
-              <button className="primary-button" onClick={() => onOpenLesson(nextLesson)}><Play />{t("dashboard.continue", { title: displayNextLesson.title })}<ArrowRight /></button>
-            ) : (
-              <button className="primary-button" onClick={() => onNavigate("journey")}><Trophy />{t("dashboard.capstone")}<ArrowRight /></button>
-            )}
-            <button className="text-button" onClick={() => onNavigate("course")}>{t("dashboard.browse")} <ChevronRight /></button>
+    <div className="page dashboard-page dashboard-vnext">
+      <section className="progress-praise" data-testid="progress-praise" data-praise-reason={praiseReason} aria-label={t("dashboard.praise")}>
+        <div className="praise-buddy"><img src={qingmiBuddy} alt="" /><Sparkles /></div>
+        <div><span>{t("dashboard.praise")}</span><p>{praiseText}</p></div>
+        <small><Flame />{t("dashboard.streak", { count: progress.streak })}</small>
+      </section>
+
+      <section className="today-focus">
+        <div className="today-focus-copy">
+          <span className="eyebrow">{timeGreeting(t)}，{user.name}</span>
+          <h1>{displayFocusLesson ? t("dashboard.focusTitle") : t("dashboard.capstone")}</h1>
+          <p>{displayFocusLesson?.summary ?? t("dashboard.focusComplete")}</p>
+          {focusLesson && displayFocusLesson ? (
+            <button className="primary-button focus-cta" onClick={() => onOpenLesson(focusLesson)}>
+              <Play />{savedLesson?.id === focusLesson.id ? t("dashboard.resumePhase", { phase: t(`learning.phase.${focusPhase}`) }) : t("dashboard.startStep")}<ArrowRight />
+            </button>
+          ) : (
+            <button className="primary-button focus-cta" onClick={() => onNavigate("journey")}><Trophy />{t("dashboard.capstone")}<ArrowRight /></button>
+          )}
+        </div>
+        <aside className="focus-task">
+          <div className="focus-task-head">
+            <span>{focusStage ? `${localizeStage(focusStage).number} · ${localizeStage(focusStage).title}` : t("dashboard.journeyTitle")}</span>
+            <b>{progressPercent}%</b>
           </div>
-        </div>
-        <div className={`hero-buddy level-${buddyLevel.level}`}>
-          <div className="buddy-orbit orbit-a"><span>{t("dashboard.orbitInsight")}</span></div>
-          <div className="buddy-orbit orbit-b"><span>{t("dashboard.orbitWork")}</span></div>
-          <div className="buddy-orbit orbit-c"><span>{t("dashboard.orbitPractice")}</span></div>
-          <div className="buddy-glow" />
-          <img src={qingmiBuddy} alt={`${t("nav.buddyFull")} · ${displayLevel.name}`} />
-          <div className="buddy-level-card">
-            <span>Lv.{buddyLevel.level}</span><div><b>{displayLevel.name}</b><small>{displayLevel.note}</small></div>
-          </div>
-        </div>
+          <ProgressBar value={progressPercent} />
+          <div className="focus-output"><Target /><span><small>{t("lesson.outcome")}</small><b>{displayFocusLesson?.deliverable ?? t("dashboard.focusComplete")}</b></span></div>
+          <div className="focus-buddy-level"><img src={qingmiBuddy} alt="" /><span><small>Lv.{buddyLevel.level} · {displayLevel.name}</small><b>{progress.xp} {t("common.xp")}</b></span></div>
+        </aside>
       </section>
 
-      <section className="dashboard-grid">
-        <button className="praise-card" onClick={onPraise}>
-          <div className="praise-top"><span><Star />{t("dashboard.praise")}</span><small>{t("dashboard.streak", { count: progress.streak })}</small></div>
-          <blockquote>“{localizePraise(praise)}”</blockquote>
-          <div className="praise-sign">— {t("nav.buddy")} <span>{t("dashboard.replay")} <ChevronRight /></span></div>
-        </button>
-
-        <article className="level-progress-card">
-          <div className="card-heading"><div><span className="section-kicker">KNOWLEDGE BUDDY</span><h2>{t("dashboard.absorbing")}</h2></div><button className="round-link" onClick={() => onNavigate("buddy")} aria-label={t("nav.buddyFull")}><ArrowRight /></button></div>
-          <div className="knowledge-meter">
-            <div className="meter-number"><b>{progress.xp}</b><span>{t("common.xp")}</span></div>
-            <div className="meter-main"><ProgressBar value={levelProgress} /><div><span>{t("dashboard.current", { level: displayLevel.name })}</span><span>{nextLevel && displayNextLevel ? t("dashboard.next", { level: displayNextLevel.name, count: Math.max(0, nextLevel.min - progress.xp) }) : t("dashboard.max")}</span></div></div>
-          </div>
-        </article>
-      </section>
-
-      <section className="quick-stats">
-        <StatCard icon={<BookOpen />} value={`${completedCount}/32`} label={t("dashboard.statLessons")} tone="blue" />
-        <StatCard icon={<Target />} value={`${progressPercent}%`} label={t("dashboard.statProgress")} tone="coral" />
-        <StatCard icon={<Flame />} value={t("common.days", { count: progress.streak })} label={t("dashboard.statStreak")} tone="gold" />
-        <StatCard icon={<Layers3 />} value={`${courseStages.filter((stage) => stage.lessons.every((lesson) => completed.includes(lesson.id))).length}/8`} label={t("dashboard.statStages")} tone="green" />
-      </section>
-
-      <section className="section-block">
-        <div className="section-heading-row">
-          <div><span className="section-kicker">12-WEEK JOURNEY</span><h2>{t("dashboard.journeyTitle")}</h2><p>{t("dashboard.journeyDesc")}</p></div>
-          <button className="outline-button" onClick={() => onNavigate("journey")}>{t("dashboard.viewMap")} <ArrowRight /></button>
-        </div>
-        <div className="stage-strip">
-          {courseStages.map((stage) => {
-            const displayStage = localizeStage(stage);
-            const count = stage.lessons.filter((lesson) => completed.includes(lesson.id)).length;
-            return (
-              <button key={stage.id} className="stage-mini" onClick={() => onNavigate("course")} style={{ "--stage-color": stage.color } as React.CSSProperties}>
-                <span>{immortalByStage[stage.id]?.glyph ?? stage.number}</span><div><small>{stage.number} · {displayStage.weeks}</small><b>{displayStage.title}</b><em>{t("dashboard.stageDone", { count })}</em></div><ChevronRight />
-              </button>
-            );
-          })}
+      <section className="learning-loop-preview" aria-labelledby="learning-loop-title">
+        <div className="section-heading-row compact-heading"><div><span className="section-kicker">ONE LESSON · ONE OUTPUT</span><h2 id="learning-loop-title">{t("learning.loopTitle")}</h2></div><button className="text-button" onClick={() => onNavigate("course")}>{t("dashboard.browse")}<ChevronRight /></button></div>
+        <div className="four-step-preview">
+          {([
+            ["concept", <Lightbulb />, t("learning.phase.concept"), t("learning.phase.conceptHint")],
+            ["learn", <BookOpen />, t("learning.phase.learn"), t("learning.phase.learnHint")],
+            ["practice", <BrainCircuit />, t("learning.phase.practice"), t("learning.phase.practiceHint")],
+            ["workbench", <FolderOpen />, t("learning.phase.workbench"), t("learning.phase.workbenchHint")],
+          ] as const).map(([id, icon, title, hint], index) => <article key={id} className={focusPhase === id ? "active" : ""}><span>{icon}</span><div><small>0{index + 1}</small><b>{title}</b><p>{hint}</p></div></article>)}
         </div>
       </section>
 
-      <section className="opc-banner">
-        <div className="opc-mark"><Orbit /></div>
-        <div><span>{t("dashboard.opcLabel")}</span><h2>{t("dashboard.opcTitle")}</h2></div>
-        <div className="opc-points"><span><Check />{t("dashboard.opcReal")}</span><span><Check />{t("dashboard.opcCollab")}</span><span><Check />{t("dashboard.opcEvidence")}</span><span><Check />{t("dashboard.opcShip")}</span></div>
+      <section className="journey-peek">
+        <div><span className="section-kicker">STRATEGY → GLOBAL</span><h2>{t("dashboard.journeyTitle")}</h2></div>
+        <div className="journey-peek-track">{courseStages.map((stage) => {
+          const displayStage = localizeStage(stage);
+          const done = stage.lessons.filter((lesson) => completed.includes(lesson.id)).length;
+          return <button key={stage.id} onClick={() => onNavigate("course")} className={done === stage.lessons.length ? "done" : done > 0 ? "current" : ""}><span>{done === stage.lessons.length ? <Check /> : stage.number}</span><b>{displayStage.title}</b><small>{done}/4</small></button>;
+        })}</div>
       </section>
     </div>
   );
@@ -1267,63 +1269,43 @@ function LanguageCoverageNotice({ text, compact = false }: { text: string; compa
 }
 
 function CourseCenter({ completed, progressPercent, onOpenLesson }: { completed: string[]; progressPercent: number; onOpenLesson: (lesson: Lesson) => void }) {
-  const { t, locale, localizeStage, localizeImmortal, localizeLesson, contractFields } = useI18n();
+  const { t, locale, localizeStage, localizeImmortal, localizeLesson } = useI18n();
   const nextLesson = allLessons.find((lesson) => !completed.includes(lesson.id)) ?? allLessons[0];
   const displayNextLesson = localizeLesson(nextLesson);
   return (
-    <div className="page course-page">
-      <PageIntro kicker="THE SOLO COMPANY PRODUCT JOURNEY" title={t("course.title")} description={t("course.description")}>
-        <div className="overall-progress"><div><b>{progressPercent}%</b><span>{t("course.totalProgress")}</span></div><ProgressBar value={progressPercent} /><small>{t("course.progressDone", { done: completed.length, total: allLessons.length })}</small></div>
-      </PageIntro>
-
+    <div className="page course-page course-vnext">
+      <header className="course-vnext-head">
+        <div><span className="section-kicker">THE SOLO COMPANY PRODUCT JOURNEY</span><h1>{t("course.title")}</h1><p>{t("course.description")}</p></div>
+        <div className="course-progress-compact"><b>{progressPercent}%</b><ProgressBar value={progressPercent} /><small>{t("course.progressDone", { done: completed.length, total: allLessons.length })}</small></div>
+      </header>
       {locale !== "zh-CN" && <LanguageCoverageNotice text={t("course.languageCoverage")} />}
+      <button className="course-next-card" onClick={() => onOpenLesson(nextLesson)}><span><Play /></span><div><small>{t("course.startRoute")}</small><b>{displayNextLesson.title}</b><p>{displayNextLesson.deliverable}</p></div><ArrowRight /></button>
 
-      <div className="course-principles">
-        <span><BookMarked /><b>24</b> {t("course.books")}</span><span><FileText /><b>32</b> {t("course.lectures")}</span><span><BrainCircuit /><b>32</b> {t("course.coaches")}</span><span><CirclePlay /><b>3</b> {t("course.videos")}</span>
-      </div>
+      <section className="course-loop-strip"><div><span className="section-kicker">HOW EACH LESSON WORKS</span><h2>{t("learning.loopTitle")}</h2></div><ol><li><Lightbulb /><span><b>{t("learning.phase.concept")}</b><small>{t("learning.phase.conceptHint")}</small></span></li><li><BookOpen /><span><b>{t("learning.phase.learn")}</b><small>{t("learning.phase.learnHint")}</small></span></li><li><BrainCircuit /><span><b>{t("learning.phase.practice")}</b><small>{t("learning.phase.practiceHint")}</small></span></li><li><FolderOpen /><span><b>{t("learning.phase.workbench")}</b><small>{t("learning.phase.workbenchHint")}</small></span></li></ol></section>
 
-      <section className="course-editor-note">
-        <span><LibraryBig /></span>
-        <div><b>{t("course.editionTitle")}</b><p>{t("course.editionDesc")}</p></div>
-        <span className="edition-chip">{t("course.editionChip")}</span>
+      <section className="stage-accordion" aria-labelledby="stage-list-title">
+        <div className="stage-accordion-heading"><span className="section-kicker">8 STAGES · STRATEGY TO GLOBAL</span><h2 id="stage-list-title">{t("course.orchestrate")}</h2><p>{t("course.orchestrateDesc")}</p></div>
+        {courseStages.map((stage, index) => {
+          const displayStage = localizeStage(stage);
+          const immortal = immortalByStage[stage.id] ? localizeImmortal(immortalByStage[stage.id]) : undefined;
+          const done = stage.lessons.filter((lesson) => completed.includes(lesson.id)).length;
+          const guide = moduleGuides[stage.id];
+          const shouldOpen = done > 0 && done < stage.lessons.length || (done === 0 && courseStages.slice(0, index).every((item) => item.lessons.every((lesson) => completed.includes(lesson.id))));
+          return <details className="stage-disclosure" key={stage.id} open={shouldOpen}>
+            <summary><span className="stage-disclosure-number">{done === 4 ? <Check /> : stage.number}</span><div><small>{displayStage.weeks} · {immortal?.domain}</small><h3>{displayStage.title}</h3><p>{displayStage.subtitle}</p></div><em>{done}/4</em><ChevronDown /></summary>
+            <div className="stage-disclosure-body">
+              {immortal && <div className="stage-question"><Compass /><span><small>{t("course.keyQuestion")}</small><b>{immortal.keyQuestion}</b></span></div>}
+              <div className="lesson-list compact-lessons">{displayStage.lessons.map((lesson, lessonIndex) => {
+                const doneLesson = completed.includes(lesson.id);
+                return <button key={lesson.id} className={doneLesson ? "lesson-row completed" : "lesson-row"} onClick={() => onOpenLesson(lesson)}><span className="lesson-index">{doneLesson ? <Check /> : `${stage.number}.${lessonIndex + 1}`}</span><div><b>{lesson.title}</b><small>{lesson.duration} · {lesson.deliverable}</small></div><span className="lesson-action">{doneLesson ? t("common.completed") : t("common.start")}<ChevronRight /></span></button>;
+              })}</div>
+              {guide && <details className="reading-disclosure"><summary><LibraryBig />{t("course.coreReading")}<ChevronDown /></summary><div>{guide.books.map((book) => <a href={book.sourceUrl} target="_blank" rel="noreferrer" key={book.originalTitle}><b>{locale === "zh-CN" ? book.title : book.originalTitle}</b><small>{book.author}</small><ExternalLink /></a>)}</div></details>}
+            </div>
+          </details>;
+        })}
       </section>
 
-      <button className="course-start-shortcut" onClick={() => onOpenLesson(nextLesson)}>
-        <span><Play /></span><div><small>{t("course.startRoute")}</small><b>{displayNextLesson.title}</b></div><ArrowRight />
-      </button>
-
-      <MethodStack locale={locale} />
-
-      <section className="immortal-system">
-        <div className="immortal-system-heading">
-          <div><span className="section-kicker">PRODUCT COMPANY OS · 8 STAGES</span><h2>{t("course.orchestrate")}</h2><p>{t("course.orchestrateDesc")}</p></div>
-          <div className="immortal-route-line"><span>{t("course.routeStrategy")}</span><i /><span>{t("course.routeProduct")}</span><i /><span>{t("course.routeRevenue")}</span><i /><span>{t("course.routeGlobal")}</span></div>
-        </div>
-        <div className="immortal-grid">
-          {eightImmortals.map((immortal) => {
-            const displayImmortal = localizeImmortal(immortal);
-            const stage = courseStages.find((item) => item.id === immortal.stageId)!;
-            const displayStage = localizeStage(stage);
-            const done = stage.lessons.filter((lesson) => completed.includes(lesson.id)).length;
-            return (
-              <article key={immortal.stageId} className="immortal-card" style={{ "--immortal-color": stage.color } as React.CSSProperties}>
-                <div className="immortal-seal">{displayImmortal.glyph}</div>
-                <div className="immortal-card-copy"><small>{stage.number} · {displayStage.weeks} · {t("dashboard.stageDone", { count: done })}</small><h3>{displayStage.title}</h3><b>{displayImmortal.domain}</b><p>{displayImmortal.keyQuestion}</p></div>
-              </article>
-            );
-          })}
-        </div>
-        <div className="dual-eight-contract">
-          <div><Orbit /><span><small>{t("course.contractTitle")}</small><b>{t("course.contractValue")}</b></span></div>
-          <div className="contract-fields"><small>{t("course.contractHint")}</small><p>{contractFields.map((item, index) => <span key={index}><em>{index + 1}</em>{item}</span>)}</p></div>
-        </div>
-      </section>
-
-      <div className="stage-list">
-        {courseStages.map((stage, index) => (
-          <StageCourseCard key={stage.id} stage={stage} index={index} completed={completed} onOpenLesson={onOpenLesson} />
-        ))}
-      </div>
+      <details className="methods-disclosure"><summary><Layers3 /><span><b>{methodUi[locale].title}</b><small>{methodUi[locale].description}</small></span><ChevronDown /></summary><MethodStack locale={locale} /></details>
     </div>
   );
 }
@@ -1369,46 +1351,6 @@ function MethodStack({ locale }: { locale: ReturnType<typeof useI18n>["locale"] 
             <article key={lane.id}><span>{lane.code}</span><em>{`0${index + 1}`}</em><h4>{lane.title[locale]}</h4><p>{lane.description[locale]}</p></article>
           ))}
         </div>
-      </div>
-    </section>
-  );
-}
-
-function StageCourseCard({ stage, index, completed, onOpenLesson }: { stage: CourseStage; index: number; completed: string[]; onOpenLesson: (lesson: Lesson) => void }) {
-  const { t, locale, localizeStage, localizeImmortal } = useI18n();
-  const displayStage = localizeStage(stage);
-  const count = stage.lessons.filter((lesson) => completed.includes(lesson.id)).length;
-  const percent = Math.round((count / stage.lessons.length) * 100);
-  const guide = moduleGuides[stage.id];
-  const immortal = immortalByStage[stage.id] ? localizeImmortal(immortalByStage[stage.id]) : undefined;
-  return (
-    <section className="stage-card" style={{ "--stage-color": stage.color } as React.CSSProperties}>
-      <div className="stage-card-side"><span className="stage-big-glyph">{immortal?.glyph ?? stage.number}</span><span className="stage-side-number">{stage.number}</span><div className="stage-line" /><small>{displayStage.weeks}</small><span className="stage-status">{percent === 100 ? t("course.statusPassed") : index === 0 || count > 0 ? t("course.statusLearning") : t("course.statusReady")}</span></div>
-      <div className="stage-card-main">
-        <div className="stage-card-heading"><div><span>{stage.number} · {displayStage.weeks} · {t("course.productPhase")}</span><h2>{displayStage.title}</h2><p>{displayStage.subtitle}</p></div><div className="stage-ring" style={{ "--value": `${percent * 3.6}deg` } as React.CSSProperties}><b>{percent}%</b></div></div>
-        {immortal && <div className="immortal-brief"><span><Compass /><small>{t("course.keyQuestion")}</small><b>{immortal.keyQuestion}</b></span><span><Layers3 /><small>{t("course.asset")}</small><b>{immortal.opcAsset}</b></span></div>}
-        <div className="lesson-list">
-          {displayStage.lessons.map((lesson, lessonIndex) => {
-            const done = completed.includes(lesson.id);
-            return (
-              <button key={lesson.id} className={done ? "lesson-row completed" : "lesson-row"} onClick={() => onOpenLesson(lesson)}>
-                <span className="lesson-index">{done ? <Check /> : `${stage.number}.${lessonIndex + 1}`}</span>
-                <div><b>{lesson.title}</b><small>{lesson.duration} · {lesson.xp} {t("common.xp")}</small></div>
-                <span className="lesson-action">{done ? t("common.completed") : t("common.start")}<ChevronRight /></span>
-              </button>
-            );
-          })}
-        </div>
-        {guide && (
-          <div className="stage-resource-shelf">
-            <div className="resource-shelf-title"><LibraryBig /><span><small>CORE READING</small><b>{t("course.coreReading")}</b></span></div>
-            <div className="resource-book-chips">
-              {guide.books.map((item, bookIndex) => <span key={item.originalTitle}><em>{bookIndex + 1}</em><b>{locale === "zh-CN" ? item.title.replace(/[《》]/g, "") : item.originalTitle}</b><small>{item.author.split("、")[0]}</small></span>)}
-            </div>
-            <div className="resource-counts"><span><FileText />{t("course.guideCount")}</span><span><BrainCircuit />{t("course.coachCount")}</span><span><Video />{t("course.videoCount", { count: guide.videos.length })}</span></div>
-          </div>
-        )}
-        <div className="stage-deliverable"><Trophy /><div><span>{t("course.deliverable")}</span><b>{displayStage.deliverable}</b></div></div>
       </div>
     </section>
   );
@@ -1792,43 +1734,44 @@ function ProfilePage({
   );
 }
 
-type LessonTab = "lecture" | "books" | "case" | "ai" | "video" | "sources";
-
-const lessonTabs: { id: LessonTab; labelKey: string; icon: ReactNode }[] = [
-  { id: "lecture", labelKey: "lesson.tabLecture", icon: <FileText /> },
-  { id: "books", labelKey: "lesson.tabBooks", icon: <LibraryBig /> },
-  { id: "case", labelKey: "lesson.tabCase", icon: <Lightbulb /> },
-  { id: "ai", labelKey: "lesson.tabAi", icon: <BrainCircuit /> },
-  { id: "video", labelKey: "lesson.tabVideo", icon: <CirclePlay /> },
-  { id: "sources", labelKey: "lesson.tabSources", icon: <BookMarked /> },
+const learningPhases: { id: LearningPhase; labelKey: string; hintKey: string; icon: ReactNode; protected: boolean }[] = [
+  { id: "concept", labelKey: "learning.phase.concept", hintKey: "learning.phase.conceptHint", icon: <Lightbulb />, protected: false },
+  { id: "learn", labelKey: "learning.phase.learn", hintKey: "learning.phase.learnHint", icon: <BookOpen />, protected: false },
+  { id: "practice", labelKey: "learning.phase.practice", hintKey: "learning.phase.practiceHint", icon: <BrainCircuit />, protected: true },
+  { id: "workbench", labelKey: "learning.phase.workbench", hintKey: "learning.phase.workbenchHint", icon: <FolderOpen />, protected: true },
 ];
 
 function LessonDialog({
+  userId,
   lesson,
   completed,
   legacyCompleted,
   evidence,
   aiDecision,
+  canPractice,
   onClose,
   onSaveDraft,
   onComplete,
-  onUseAi,
+  onRunCoach,
   onMembershipRequired,
 }: {
+  userId: string;
   lesson: Lesson;
   completed: boolean;
   legacyCompleted: boolean;
   evidence: LearningProgress["evidenceByLessonId"][string] | null;
   aiDecision: AiUsageDecision;
+  canPractice: boolean;
   onClose: () => void;
   onSaveDraft: (draft: LessonEvidenceDraft) => void;
   onComplete: (draft: LessonEvidenceDraft) => void;
-  onUseAi: () => AiUsageDecision | null | Promise<AiUsageDecision | null>;
+  onRunCoach: (input: DeepSeekCoachRequest) => Promise<DeepSeekCoachResponse | null>;
   onMembershipRequired: () => void;
 }) {
-  const { t, locale, direction, localizeLesson, localizeStage } = useI18n();
-  const dialogRef = useRef<HTMLElement>(null);
-  const [tab, setTab] = useState<LessonTab>("lecture");
+  const { t, locale, localizeLesson, localizeStage } = useI18n();
+  const storedPoint = loadLearningPoint(userId);
+  const storedPhase = storedPoint?.lessonId === lesson.id ? storedPoint.phase : "concept";
+  const [phase, setPhase] = useState<LearningPhase>(!canPractice && (storedPhase === "practice" || storedPhase === "workbench") ? "learn" : storedPhase);
   const [evidenceText, setEvidenceText] = useState(evidence?.text ?? "");
   const [evidenceUrl, setEvidenceUrl] = useState(evidence?.url ?? "");
   const [draftSaved, setDraftSaved] = useState(false);
@@ -1842,38 +1785,47 @@ function LessonDialog({
   const validUrl = evidenceUrlIsValid(evidenceUrl);
   const canSubmit = evidenceCanSubmit(draft);
   const canSaveDraft = !completed && Boolean(evidenceText.trim() || evidenceUrl.trim());
-  useEscape(onClose);
-  useDialogFocus(dialogRef);
+  const currentPhaseIndex = learningPhases.findIndex((item) => item.id === phase);
+  const goToPhase = (nextPhase: LearningPhase) => {
+    const target = learningPhases.find((item) => item.id === nextPhase);
+    if (target?.protected && !canPractice) {
+      onMembershipRequired();
+      return;
+    }
+    setPhase(nextPhase);
+    saveLearningPoint(userId, lesson.id, nextPhase);
+    window.requestAnimationFrame(resetScrollPosition);
+  };
+  useEffect(() => {
+    const effectivePhase = !canPractice && (phase === "practice" || phase === "workbench") ? "learn" : phase;
+    if (effectivePhase !== phase) setPhase(effectivePhase);
+    saveLearningPoint(userId, lesson.id, effectivePhase);
+  }, [canPractice, lesson.id, phase, userId]);
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section ref={dialogRef} className="lesson-dialog" role="dialog" aria-modal="true" aria-labelledby="lesson-title">
-        <button className="dialog-close" onClick={onClose} aria-label={t("common.close")}><X /></button>
-        <div className="lesson-dialog-language"><LanguageSwitcher compact inverted /></div>
-        <div className="lesson-dialog-top">
-          <div className="lesson-breadcrumb"><span>{displayStage?.number} · {displayStage?.title}</span><ChevronRight /><span>{t("lesson.practical")}</span></div>
-          <div className="lesson-meta"><span>{t("lesson.explainer", { duration: displayLesson.duration })}</span><span>{t("lesson.practiceTime")}</span><span><Zap />{lesson.xp} {t("common.xp")}</span></div>
-          <h1 id="lesson-title">{displayLesson.title}</h1><p>{displayLesson.summary}</p>
-          <div className="lesson-outcome-line"><Trophy /><span><small>{t("lesson.outcome")}</small><b>{displayLesson.deliverable}</b></span></div>
-        </div>
-        {locale !== "zh-CN" && <LanguageCoverageNotice text={t("lesson.masterLanguageNotice")} compact />}
-        <nav className="lesson-tabbar" aria-label={t("lesson.contentNav")} role="tablist">
-          {lessonTabs.map((item) => <button id={`lesson-tab-${item.id}`} role="tab" aria-controls={`lesson-panel-${item.id}`} tabIndex={tab === item.id ? 0 : -1} key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)} onKeyDown={(event) => { const currentIndex = lessonTabs.findIndex((candidate) => candidate.id === item.id); const forwardKey = direction === "rtl" ? "ArrowLeft" : "ArrowRight"; const backwardKey = direction === "rtl" ? "ArrowRight" : "ArrowLeft"; const nextIndex = event.key === forwardKey ? (currentIndex + 1) % lessonTabs.length : event.key === backwardKey ? (currentIndex - 1 + lessonTabs.length) % lessonTabs.length : -1; if (nextIndex >= 0) { event.preventDefault(); const next = lessonTabs[nextIndex].id; setTab(next); window.requestAnimationFrame(() => document.getElementById(`lesson-tab-${next}`)?.focus()); } }} aria-selected={tab === item.id}>{item.icon}<span>{t(item.labelKey)}</span>{item.id === "books" && <em>3</em>}{item.id === "video" && <em>{moduleGuide?.videos.length ?? 0}</em>}</button>)}
-        </nav>
-        <div className="lesson-dialog-body" id={`lesson-panel-${tab}`} role="tabpanel" aria-labelledby={`lesson-tab-${tab}`}>
-          {tab === "lecture" ? <LecturePanel lesson={displayLesson} guide={guide} /> : (
-            <div className={locale === "zh-CN" ? "master-content" : "master-content foreign-locale"} lang="zh-CN" dir="ltr">
-              {locale !== "zh-CN" && <span className="master-language-badge"><Globe2 />{t("lesson.chineseOriginal")}</span>}
-              {tab === "books" && moduleGuide && <BookShelfPanel moduleGuide={moduleGuide} />}
-              {tab === "case" && moduleGuide && <CasePanel lesson={displayLesson} moduleGuide={moduleGuide} guide={guide} />}
-              {tab === "ai" && guide && <AiCoachPanel lesson={displayLesson} guide={guide} aiDecision={aiDecision} onUseAi={onUseAi} onMembershipRequired={onMembershipRequired} />}
-              {tab === "video" && moduleGuide && <VideoPanel moduleGuide={moduleGuide} />}
-              {tab === "sources" && moduleGuide && <SourcesPanel lesson={displayLesson} moduleGuide={moduleGuide} />}
-            </div>
-          )}
-          <section className="lesson-submit-zone">
-            <div className="practice-box"><span><Target />{t("lesson.yourProject")}</span><p>{displayLesson.practice}</p></div>
-            <div className="deliverable-box"><span><Trophy />{t("lesson.saveEvidence")}</span><b>{displayLesson.deliverable}</b></div>
-            <section className={completed ? "evidence-form submitted" : "evidence-form"}>
+    <section className="learning-route" data-testid="learning-route" aria-labelledby="lesson-title">
+      <header className="learning-route-header">
+        <button data-testid="learning-back" className="learning-back" onClick={onClose}><ChevronRight />{t("learning.back")}</button>
+        <div className="learning-route-language"><LanguageSwitcher compact /></div>
+      </header>
+      <div className="learning-title-block">
+        <div className="lesson-breadcrumb"><span>{displayStage?.number} · {displayStage?.title}</span><ChevronRight /><span>{t("lesson.practical")}</span></div>
+        <h1 id="lesson-title">{displayLesson.title}</h1>
+        <p>{displayLesson.summary}</p>
+        <div className="learning-outcome"><Trophy /><span><small>{t("lesson.outcome")}</small><b>{displayLesson.deliverable}</b></span></div>
+      </div>
+      {locale !== "zh-CN" && <LanguageCoverageNotice text={t("lesson.masterLanguageNotice")} compact />}
+      <nav className="learning-phase-nav" aria-label={t("learning.phaseNav")}>
+        {learningPhases.map((item, index) => <button data-testid={`learning-phase-${item.id}`} key={item.id} className={phase === item.id ? "active" : ""} aria-current={phase === item.id ? "step" : undefined} onClick={() => goToPhase(item.id)}><span>{phase === item.id ? item.icon : index + 1}</span><div><b>{t(item.labelKey)}</b><small>{t(item.hintKey)}</small></div>{item.protected && !canPractice && <LockKeyhole />}</button>)}
+      </nav>
+      <div className="learning-phase-panel" data-testid="learning-phase-panel">
+        {phase === "concept" && guide && <ConceptStep lesson={displayLesson} guide={guide} />}
+        {phase === "learn" && guide && moduleGuide && <LearnStep lesson={displayLesson} guide={guide} moduleGuide={moduleGuide} foreignLocale={locale !== "zh-CN"} />}
+        {phase === "practice" && guide && <DeepSeekPracticeStep lesson={displayLesson} guide={guide} aiDecision={aiDecision} onRunCoach={onRunCoach} />}
+        {phase === "workbench" && <LocalHarnessStep lesson={displayLesson} />}
+        {phase === "workbench" && <section className="lesson-submit-zone">
+          <div className="practice-box"><span><Target />{t("lesson.yourProject")}</span><p>{displayLesson.practice}</p></div>
+          <div className="deliverable-box"><span><Trophy />{t("lesson.saveEvidence")}</span><b>{displayLesson.deliverable}</b></div>
+          <section className={completed ? "evidence-form submitted" : "evidence-form"}>
               <header><span><BadgeCheck /></span><div><h3>{t("lesson.evidenceTitle")}</h3><p>{t("lesson.evidenceDesc")}</p></div></header>
               {legacyCompleted && !completed && <div className="evidence-state legacy"><RotateCcw />{t("lesson.legacyEvidence")}</div>}
               {completed && <div className="evidence-state complete"><CheckCircle2 />{t("lesson.evidenceSubmitted")}</div>}
@@ -1892,39 +1844,116 @@ function LessonDialog({
                 {!completed && <button data-testid="save-evidence-draft" className="outline-button" disabled={!canSaveDraft} onClick={() => { onSaveDraft(draft); setDraftSaved(true); }}><NotebookPen />{t("lesson.saveDraft")}</button>}
               </div>
               <p className="evidence-save-status" aria-live="polite">{draftSaved ? t("lesson.draftSaved") : ""}</p>
-            </section>
           </section>
-        </div>
-        <div className="lesson-dialog-footer"><div><small>{t("lesson.markNote")}</small><b>{completed ? t("lesson.evidenceSubmitted") : t("lesson.earn", { xp: lesson.xp })}</b></div><button data-testid="submit-evidence" className={completed ? "primary-button completed-button" : "primary-button"} disabled={!canSubmit} onClick={() => onComplete(draft)}>{completed ? <><Check />{t("lesson.updateEvidence")}</> : <>{t("lesson.submitEvidence")} <Sparkles /></>}</button></div>
-      </section>
-    </div>
+          <div className="evidence-submit-row"><span><small>{t("lesson.markNote")}</small><b>{completed ? t("lesson.evidenceSubmitted") : t("lesson.earn", { xp: lesson.xp })}</b></span><button data-testid="submit-evidence" className={completed ? "primary-button completed-button" : "primary-button"} disabled={!canSubmit} onClick={() => onComplete(draft)}>{completed ? <><Check />{t("lesson.updateEvidence")}</> : <>{t("lesson.submitEvidence")} <Sparkles /></>}</button></div>
+        </section>}
+      </div>
+      <footer className="learning-route-footer">
+        <button className="outline-button" disabled={currentPhaseIndex === 0} onClick={() => goToPhase(learningPhases[Math.max(0, currentPhaseIndex - 1)].id)}>{t("learning.previous")}</button>
+        <span>{currentPhaseIndex + 1} / {learningPhases.length}</span>
+        {currentPhaseIndex < learningPhases.length - 1 && <button data-testid="learning-next" className="primary-button" onClick={() => goToPhase(learningPhases[currentPhaseIndex + 1].id)}>{t("learning.next")}<ArrowRight /></button>}
+      </footer>
+    </section>
   );
 }
 
-function LecturePanel({ lesson, guide }: { lesson: Lesson; guide: (typeof lessonGuides)[string] | undefined }) {
+function ConceptStep({ lesson, guide }: { lesson: Lesson; guide: (typeof lessonGuides)[string] }) {
   const { t, locale } = useI18n();
-  if (!guide) return null;
   const concept = locale === "zh-CN" ? guide.keyConcept : t("lesson.intlConcept");
-  const conceptDetail = locale === "zh-CN" ? guide.conceptDetail : t("lesson.intlConceptDetail");
-  const methodName = locale === "zh-CN" ? guide.methodName : t("lesson.intlMethod");
-  const methodSteps = locale === "zh-CN" ? guide.methodSteps : [t("lesson.intlStep1"), t("lesson.intlStep2"), t("lesson.intlStep3")];
-  const pitfall = locale === "zh-CN" ? guide.pitfall : t("lesson.intlPitfall");
-  const quickCheck = locale === "zh-CN" ? guide.quickCheck : [
+  const detail = locale === "zh-CN" ? guide.conceptDetail : t("lesson.intlConceptDetail");
+  const objectives = lesson.objectives.slice(0, 3);
+  const checks = locale === "zh-CN" ? guide.quickCheck : [
     { question: t("lesson.intlCheck1"), answer: t("lesson.intlAnswer1") },
     { question: t("lesson.intlCheck2"), answer: t("lesson.intlAnswer2") },
   ];
-  return (
-    <div className="course-panel lecture-panel">
-      <section className="lesson-lead-grid">
-        <div><span className="section-kicker">YOU WILL LEARN</span><h2>{t("lesson.youLearn")}</h2><ul className="objective-list">{lesson.objectives.map((objective) => <li key={objective}><Check />{objective}</li>)}</ul></div>
-        <aside><Quote /><p>{concept}</p><small>{t("lesson.coreConcept")}</small></aside>
-      </section>
-      <article className="lecture-chapter"><div className="chapter-number">01</div><div><span>{t("lesson.coreConcept")}</span><h2>{concept}</h2><p>{conceptDetail}</p></div></article>
-      <article className="lecture-chapter method-chapter"><div className="chapter-number">02</div><div><span>{t("lesson.method")}</span><h2>{methodName}</h2><ol>{methodSteps.map((step, index) => <li key={step}><b>{index + 1}</b><span>{step}</span></li>)}</ol></div></article>
-      <article className="lecture-warning"><Lightbulb /><div><span>{t("lesson.pitfall")}</span><p>{pitfall}</p></div></article>
-      <section className="quick-check"><div><CheckCircle2 /><span><small>QUICK CHECK</small><h2>{t("lesson.quickCheck")}</h2></span></div>{quickCheck.map((item, index) => <details key={item.question}><summary><span>{index + 1}</span>{item.question}<ChevronRight /></summary><p>{item.answer}</p></details>)}</section>
+  return <article className="concept-step">
+    <span className="section-kicker">01 · CORE IDEA</span><h2>{concept}</h2><p className="concept-lead">{detail}</p>
+    <div className="concept-points">{objectives.map((objective, index) => <div key={objective}><span>0{index + 1}</span><p>{objective}</p></div>)}</div>
+    <aside className="concept-warning"><Lightbulb /><span><small>{t("lesson.pitfall")}</small><p>{locale === "zh-CN" ? guide.pitfall : t("lesson.intlPitfall")}</p></span></aside>
+    <section className="concept-check"><h3><CheckCircle2 />{t("lesson.quickCheck")}</h3>{checks.map((item, index) => <details key={item.question}><summary><span>{index + 1}</span>{item.question}<ChevronDown /></summary><p>{item.answer}</p></details>)}</section>
+  </article>;
+}
+
+function LearnStep({ lesson, guide, moduleGuide, foreignLocale }: { lesson: Lesson; guide: (typeof lessonGuides)[string]; moduleGuide: (typeof moduleGuides)[string]; foreignLocale: boolean }) {
+  const { t, locale } = useI18n();
+  const methodName = locale === "zh-CN" ? guide.methodName : t("lesson.intlMethod");
+  const methodSteps = locale === "zh-CN" ? guide.methodSteps.slice(0, 3) : [t("lesson.intlStep1"), t("lesson.intlStep2"), t("lesson.intlStep3")];
+  return <article className="learn-step">
+    {foreignLocale && <span className="master-language-badge"><Globe2 />{t("lesson.chineseOriginal")}</span>}
+    <section className="learn-method"><div><span className="section-kicker">02 · METHOD</span><h2>{methodName}</h2></div><ol>{methodSteps.map((step, index) => <li key={step}><span>{index + 1}</span><p>{step}</p></li>)}</ol></section>
+    <section className="learn-case"><span className="section-kicker">ONE DEEP CASE</span><h2>{guide.workedExample.title}</h2><div><article><small>{t("learning.caseSituation")}</small><p>{guide.workedExample.situation}</p></article><article><small>{t("learning.caseAnalysis")}</small><p>{guide.workedExample.analysis}</p></article><article><small>{t("learning.caseDecision")}</small><p>{guide.workedExample.decision}</p></article></div><aside><Target /><span><small>{t("lesson.yourProject")}</small><b>{lesson.practice}</b></span></aside></section>
+    <div className="learn-library">
+      <details><summary><LibraryBig /><span><b>{t("lesson.booksTitle")}</b><small>{moduleGuide.books.length} · {t("course.coreReading")}</small></span><ChevronDown /></summary><BookShelfPanel moduleGuide={moduleGuide} /></details>
+      <details><summary><CirclePlay /><span><b>{t("lesson.videoTitle")}</b><small>{moduleGuide.videos.length} {t("course.videoCount", { count: moduleGuide.videos.length })}</small></span><ChevronDown /></summary><VideoPanel moduleGuide={moduleGuide} /></details>
+      <details><summary><BookMarked /><span><b>{t("lesson.sourcesTitle")}</b><small>{lesson.sources.length} sources</small></span><ChevronDown /></summary><SourcesPanel lesson={lesson} moduleGuide={moduleGuide} /></details>
     </div>
-  );
+  </article>;
+}
+
+function DeepSeekPracticeStep({ lesson, guide, aiDecision, onRunCoach }: { lesson: Lesson; guide: (typeof lessonGuides)[string]; aiDecision: AiUsageDecision; onRunCoach: (input: DeepSeekCoachRequest) => Promise<DeepSeekCoachResponse | null> }) {
+  const { t } = useI18n();
+  const [material, setMaterial] = useState("");
+  const [result, setResult] = useState<DeepSeekCoachResponse | null>(null);
+  const [running, setRunning] = useState(false);
+  const runCoach = async () => {
+    if (running || material.trim().length < 30) return;
+    setRunning(true);
+    try {
+      const response = await onRunCoach({ requestId: createRequestId(), lessonId: lesson.id, lessonTitle: lesson.title, goal: guide.aiLab.goal, material: material.trim(), criteria: guide.aiLab.criteria.slice(0, 6) });
+      if (response) setResult(response);
+    } finally {
+      setRunning(false);
+    }
+  };
+  const usageText = aiDecision.mode === "unlimited" ? t("membership.aiUnlimited") : t("membership.aiRemaining", { count: aiDecision.remainingRuns ?? 0 });
+  return <article className="deepseek-practice" data-testid="deepseek-practice">
+    <header><div><span className="section-kicker">03 · DEEPSEEK COACH</span><h2>{guide.aiLab.role}</h2><p>{guide.aiLab.goal}</p></div><em className={`ai-usage-badge ${aiDecision.mode}`}><Crown />{usageText}</em></header>
+    <aside className="coach-privacy"><ShieldCheck /><p><b>{t("learning.coachPrivacyTitle")}</b>{t("learning.coachPrivacy")}</p></aside>
+    <label className="coach-material" htmlFor={`coach-material-${lesson.id}`}><span>{t("learning.coachMaterial")}</span><textarea data-testid="coach-material" id={`coach-material-${lesson.id}`} value={material} onChange={(event) => setMaterial(event.target.value)} placeholder={t("learning.coachPlaceholder")} /><small>{material.trim().length} / 30 {t("learning.minimum")}</small></label>
+    <div className="coach-criteria"><span>{t("learning.coachChecks")}</span>{guide.aiLab.criteria.map((criterion) => <em key={criterion}><Check />{criterion}</em>)}</div>
+    <button data-testid="coach-submit" className="primary-button coach-submit" disabled={running || material.trim().length < 30} onClick={() => void runCoach()}><Sparkles />{running ? t("learning.coachRunning") : t("learning.coachStart")}</button>
+    {result && <section className="coach-result" data-testid="coach-result" aria-live="polite">
+      <div className="coach-ack"><Sparkles /><p>{result.answer.acknowledgement}</p><small>{result.model}</small></div>
+      <div className="coach-feedback-grid"><section><h3><CheckCircle2 />{t("learning.strengths")}</h3><ul>{result.answer.strengths.map((item) => <li key={item}>{item}</li>)}</ul></section><section><h3><Target />{t("learning.gaps")}</h3><ul>{result.answer.gaps.map((item) => <li key={item}>{item}</li>)}</ul></section></div>
+      {result.answer.rubric && <div className="coach-rubric">{result.answer.rubric.map((item) => <div className={item.status} key={item.label}><span>{item.status === "met" ? <Check /> : item.status === "partial" ? <Clock3 /> : <X />}</span><p><b>{item.label}</b><small>{item.note}</small></p></div>)}</div>}
+      {result.answer.improvedDraft && <details className="coach-draft"><summary><FileText />{t("learning.improvedDraft")}<ChevronDown /></summary><p>{result.answer.improvedDraft}</p></details>}
+      <div className="coach-question"><MessageSquareText /><span><small>{t("learning.oneQuestion")}</small><b>{result.answer.questions[0]}</b></span></div>
+      <div className="coach-next-action"><ArrowRight /><span><small>{t("learning.nextAction")}</small><b>{result.answer.nextAction}</b></span></div>
+    </section>}
+  </article>;
+}
+
+function LocalHarnessStep({ lesson }: { lesson: Lesson }) {
+  const { t } = useI18n();
+  const [files, setFiles] = useState<File[]>([]);
+  const [workspacePath, setWorkspacePath] = useState("");
+  const [copied, setCopied] = useState<"task" | "command" | "">("");
+  const mergeFiles = (incoming: File[]) => {
+    const byPath = new globalThis.Map(files.map((file) => [file.webkitRelativePath || file.name, file] as const));
+    incoming.forEach((file) => byPath.set(file.webkitRelativePath || file.name, file));
+    setFiles([...byPath.values()].slice(0, 80));
+  };
+  const secretPattern = /(^|\/)(\.env($|\.)|.*(?:secret|credential|private[-_]?key|\.pem$|\.p12$))/i;
+  const safeFiles = files.filter((file) => !secretPattern.test(file.webkitRelativePath || file.name));
+  const excludedFiles = files.filter((file) => secretPattern.test(file.webkitRelativePath || file.name));
+  const harnessReady = safeFiles.length > 0;
+  const fileList = safeFiles.map((file) => `- ${file.webkitRelativePath || file.name}`).join("\n") || `- ${t("learning.harnessNoFiles")}`;
+  const taskSpec = `${t("learning.harnessTaskTitle")}\n\n${t("learning.harnessWorkspace")}: ${workspacePath.trim() || t("learning.harnessChooseInApp")}\n${t("learning.harnessLesson")}: ${lesson.title}\n${t("learning.harnessGoal")}: ${lesson.practice}\n${t("learning.harnessOutput")}: ${lesson.deliverable}\n\n${t("learning.harnessAllowedFiles")}\n${fileList}\n\n${t("learning.harnessRules")}\n1. ${t("learning.harnessRuleInspect")}\n2. ${t("learning.harnessRulePlan")}\n3. ${t("learning.harnessRuleEdit")}\n4. ${t("learning.harnessRuleVerify")}\n5. ${t("learning.harnessRuleDiff")}`;
+  const copyText = async (kind: "task" | "command", value: string) => {
+    await navigator.clipboard?.writeText(value);
+    setCopied(kind);
+    window.setTimeout(() => setCopied(""), 1800);
+  };
+  const fileInputHandler = (event: React.ChangeEvent<HTMLInputElement>) => mergeFiles(Array.from(event.currentTarget.files ?? []));
+  return <article className="harness-step" data-testid="harness-step">
+    <header><span className="section-kicker">04 · LOCAL FILE HARNESS</span><h2>{t("learning.harnessTitle")}</h2><p>{t("learning.harnessIntro")}</p></header>
+    <aside className="harness-safety"><ShieldCheck /><div><b>{t("learning.harnessSafetyTitle")}</b><p>{t("learning.harnessSafety")}</p></div></aside>
+    <section className="harness-picker"><div><label className="outline-button"><FileText />{t("learning.selectFiles")}<input data-testid="harness-file-input" type="file" multiple onChange={fileInputHandler} /></label><label className="outline-button"><FolderOpen />{t("learning.selectFolder")}<input type="file" multiple {...({ webkitdirectory: "", directory: "" } as Record<string, string>)} onChange={fileInputHandler} /></label></div><small>{t("learning.fileLocalOnly")}</small></section>
+    <label className="harness-path"><span>{t("learning.workspacePath")}</span><input value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} placeholder="D:\\my-project" /><small>{t("learning.workspacePathHint")}</small></label>
+    <section className="harness-selected" data-testid="harness-selected-files"><header><b>{t("learning.selectedFiles")}</b><span>{safeFiles.length}</span></header>{safeFiles.length ? <ul>{safeFiles.map((file) => <li key={`${file.webkitRelativePath || file.name}-${file.size}`}><FileText /><span><b>{file.webkitRelativePath || file.name}</b><small>{Math.max(1, Math.round(file.size / 1024))} KB</small></span></li>)}</ul> : <p>{t("learning.harnessNoFiles")}</p>}{excludedFiles.length > 0 && <aside><LockKeyhole />{t("learning.secretExcluded", { count: excludedFiles.length })}</aside>}</section>
+    <section className="harness-task"><div><span><Clipboard />{t("learning.harnessTask")}</span><button data-testid="harness-copy-task" disabled={!harnessReady} onClick={() => void copyText("task", taskSpec)}>{copied === "task" ? <ClipboardCheck /> : <Clipboard />}{copied === "task" ? t("learning.copied") : t("learning.copyTask")}</button></div><pre data-testid="harness-task-spec">{taskSpec}</pre></section>
+    <section className="harness-launch"><div><span><b>{t("learning.launchHarness")}</b><small>{t("learning.launchHint")}</small></span><code>dsh --profile web</code></div><button disabled={!harnessReady} onClick={() => void copyText("command", "dsh --profile web")}>{copied === "command" ? <ClipboardCheck /> : <Clipboard />}{t("learning.copyCommand")}</button>{harnessReady ? <a data-testid="harness-open" href="http://127.0.0.1:3080/" target="_blank" rel="noreferrer"><ExternalLink />{t("learning.openHarness")}</a> : <span data-testid="harness-open" className="harness-open-disabled" aria-disabled="true"><LockKeyhole />{t("learning.openHarness")}</span>}</section>
+  </article>;
 }
 
 function BookShelfPanel({ moduleGuide }: { moduleGuide: (typeof moduleGuides)[string] }) {
@@ -1945,81 +1974,6 @@ function BookShelfPanel({ moduleGuide }: { moduleGuide: (typeof moduleGuides)[st
             </div>
           </article>
         ))}
-      </div>
-    </div>
-  );
-}
-
-function CasePanel({ lesson, moduleGuide, guide }: { lesson: Lesson; moduleGuide: (typeof moduleGuides)[string]; guide: (typeof lessonGuides)[string] | undefined }) {
-  const { t } = useI18n();
-  return (
-    <div className="course-panel case-panel">
-      <header className="panel-intro"><span className="section-kicker">CASE-BASED LEARNING</span><h2>{t("lesson.caseTitle")}</h2><p>案例用于解释方法如何改变决策，均为课程原创教学案例，不冒充真实企业数据。</p></header>
-      <section className="module-case-card"><div className="case-label"><span>模块综合案例</span><b>CASE 0{moduleGuide.stageId === "identity" ? 1 : courseStages.findIndex((item) => item.id === moduleGuide.stageId) + 1}</b></div><h2>{moduleGuide.moduleCase.title}</h2><p>{moduleGuide.moduleCase.context}</p><div className="case-moves">{moduleGuide.moduleCase.moves.map((move, index) => <div key={move}><span>{index + 1}</span><p>{move}</p></div>)}</div><div className="case-result"><Trophy /><span><small>结果</small><b>{moduleGuide.moduleCase.result}</b></span></div></section>
-      {guide && <section className="worked-example"><span className="section-kicker">THIS LESSON</span><h2>{guide.workedExample.title}</h2><div className="example-flow"><article><span>情境</span><p>{guide.workedExample.situation}</p></article><ArrowRight /><article><span>分析</span><p>{guide.workedExample.analysis}</p></article><ArrowRight /><article><span>决定</span><p>{guide.workedExample.decision}</p></article></div></section>}
-      <section className="case-transfer"><NotebookPen /><div><b>迁移到你的项目</b><p>用同样的“情境—证据—判断—决定”结构重写「{lesson.deliverable}」，案例数字不可直接复制。</p></div></section>
-    </div>
-  );
-}
-
-function AiCoachPanel({
-  lesson,
-  guide,
-  aiDecision,
-  onUseAi,
-  onMembershipRequired,
-}: {
-  lesson: Lesson;
-  guide: (typeof lessonGuides)[string];
-  aiDecision: AiUsageDecision;
-  onUseAi: () => AiUsageDecision | null | Promise<AiUsageDecision | null>;
-  onMembershipRequired: () => void;
-}) {
-  const { t } = useI18n();
-  const [context, setContext] = useState("");
-  const [generated, setGenerated] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [running, setRunning] = useState(false);
-  const runCoach = async () => {
-    if (!aiDecision.allowed) {
-      onMembershipRequired();
-      return;
-    }
-    if (running) return;
-    setRunning(true);
-    let usage: AiUsageDecision | null = null;
-    try {
-      usage = await onUseAi();
-    } finally {
-      setRunning(false);
-    }
-    if (!usage) return;
-    const clean = context.trim();
-    const structuralNotes = [
-      clean.length < 80 ? "材料偏短：请补充对象、最近一次具体事件与可核查证据。" : "材料长度足以开始结构审查。",
-      /\d|次|天|周|元|人/.test(clean) ? "已发现数量或时间线索，请确认每个数字都有范围与来源。" : "尚未发现时间、数量或阈值，建议增加至少一个可观察标准。",
-      /证据|记录|访谈|数据|链接|作品/.test(clean) ? "已出现证据词，请在正式对话中要求 AI 逐条引用。" : "尚未说明证据来源，需防止 AI 把推断写成事实。",
-    ];
-    setGenerated(`${guide.aiLab.prompt}\n\n【我的真实项目材料】\n${clean || "（请先在此补充真实材料）"}\n\n【本地结构预检】\n- ${structuralNotes.join("\n- ")}`);
-    setCopied(false);
-  };
-  const copyPrompt = async () => {
-    if (!generated) return;
-    await navigator.clipboard?.writeText(generated);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
-  };
-  const usageText = aiDecision.mode === "unlimited"
-    ? `Max · ${t("membership.aiUnlimited")}`
-    : aiDecision.mode === "metered"
-      ? `PRO · ${t("membership.aiRemaining", { count: aiDecision.remainingRuns ?? 0 })}`
-      : `${t("membership.freeName")} · ${t("membership.aiBlocked")}`;
-  return (
-    <div className="course-panel ai-panel">
-      <header className="ai-panel-hero"><div><span><BrainCircuit />AI INTERACTIVE LAB</span><h2>{guide.aiLab.role}</h2><p>{guide.aiLab.goal}</p><em className={`ai-usage-badge ${aiDecision.mode}`} data-testid="ai-usage-status"><Crown />{usageText}</em></div><div className="ai-privacy"><ShieldCheck /><span><b>本地生成，不上传材料</b><small>此预览版不调用外部模型；生成可复制的专业陪练提示与结构检查。</small></span></div></header>
-      <div className="ai-workspace">
-        <section><label htmlFor={`ai-context-${lesson.id}`}>粘贴你的真实项目材料</label><textarea id={`ai-context-${lesson.id}`} value={context} onChange={(event) => setContext(event.target.value)} placeholder={`例如：目标客户、最近一次具体项目、已有证据、限制与“${lesson.deliverable}”草稿……`} /><div className="ai-criteria"><span>本次教练会检查</span>{guide.aiLab.criteria.map((criterion) => <em key={criterion}><Check />{criterion}</em>)}</div><button className="primary-button ai-run" disabled={running} onClick={() => void runCoach()}><Sparkles />{running ? t("lesson.aiChecking") : "生成陪练任务"}</button></section>
-        <section className={generated ? "ai-output ready" : "ai-output"} aria-live="polite"><div className="ai-output-head"><span><MessageSquareText />陪练提示词</span><button disabled={!generated} onClick={copyPrompt}>{copied ? <ClipboardCheck /> : <Clipboard />}{copied ? "已复制" : "复制到 AI"}</button></div>{generated ? <pre>{generated}</pre> : <div className="ai-empty"><BrainCircuit /><p>补充真实材料后，小晴会生成这节课专属的对练任务。</p><small>它会提醒证据缺口，但不会替你虚构客户、数据或经历。</small></div>}</section>
       </div>
     </div>
   );
@@ -2055,27 +2009,6 @@ function SourcesPanel({ lesson, moduleGuide }: { lesson: Lesson; moduleGuide: (t
         <section><h3><BookMarked />本节一手资料</h3>{lesson.sources.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.url}><span><b>{item.label}</b><small>原始页面 / 官方机构</small></span><ExternalLink /></a>)}</section>
       </div>
       <section className="editorial-policy"><FileText /><div><h3>夸夸学习 AI 内容编辑原则</h3><ul><li>不提供盗版书、整书复述或大段受版权保护原文。</li><li>观点摘要结合多来源后重新组织为课程语言，并明确应用边界。</li><li>教学案例用于练习推理，不冒充真实客户业绩；学员须以自身证据替换假设。</li><li>AI 只辅助结构、反方检查与角色练习，不可生成虚假访谈替代真人研究。</li></ul></div></section>
-    </div>
-  );
-}
-
-function PraiseDialog({ user, praise, streak, onClose }: { user: UserAccount; praise: string; streak: number; onClose: () => void }) {
-  const { t, localizePraise } = useI18n();
-  const dialogRef = useRef<HTMLElement>(null);
-  useEscape(onClose);
-  useDialogFocus(dialogRef);
-  return (
-    <div className="modal-backdrop praise-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section ref={dialogRef} className="praise-dialog" role="dialog" aria-modal="true" aria-labelledby="praise-title">
-        <button className="dialog-close light-close" onClick={onClose} aria-label={t("common.close")}><X /></button>
-        <div className="praise-rays" />
-        <div className="praise-mascot"><img src={qingmiBuddy} alt="小晴" /></div>
-        <span className="praise-date">{t("praise.day", { count: streak })}</span>
-        <h1 id="praise-title">{t("praise.welcome", { name: user.name })}</h1>
-        <blockquote>“{localizePraise(praise)}”</blockquote>
-        <button className="praise-accept" onClick={onClose}>{t("praise.accept")} <Sparkles /></button>
-        <small>{t("praise.note")}</small>
-      </section>
     </div>
   );
 }

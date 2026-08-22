@@ -141,6 +141,35 @@ export type ProductionContext = {
   aiDecision: AiUsageDecision;
 };
 
+export type DeepSeekCoachRequest = {
+  requestId: string;
+  lessonId: string;
+  lessonTitle: string;
+  goal: string;
+  material: string;
+  criteria: string[];
+};
+
+export type DeepSeekCoachAnswer = {
+  acknowledgement: string;
+  strengths: string[];
+  gaps: string[];
+  questions: string[];
+  nextAction: string;
+  improvedDraft?: string;
+  rubric?: Array<{
+    label: string;
+    status: "met" | "partial" | "missing";
+    note: string;
+  }>;
+};
+
+export type DeepSeekCoachResponse = {
+  answer: DeepSeekCoachAnswer;
+  model: string;
+  aiDecision: AiUsageDecision;
+};
+
 export async function productionRegister(input: { name: string; email: string; password: string }) {
   const data = await apiRequest<{ user: Record<string, unknown> }>("/auth/register", {
     method: "POST",
@@ -183,6 +212,24 @@ export async function productionConsumeAi() {
   const data = await apiRequest<Record<string, unknown>>("/ai/consume", { method: "POST", body: "{}" });
   const tier: MembershipTier = data.mode === "unlimited" ? "max" : data.mode === "metered" ? "pro" : "free";
   return normalizeAiUsage(data, tier);
+}
+
+export async function productionDeepSeekCoach(input: DeepSeekCoachRequest): Promise<DeepSeekCoachResponse> {
+  const data = await apiRequest<{
+    answer: DeepSeekCoachAnswer;
+    model: string;
+    aiUsage: Record<string, unknown>;
+  }>("/ai/coach", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  const mode = data.aiUsage?.mode;
+  const tier: MembershipTier = mode === "unlimited" ? "max" : mode === "metered" ? "pro" : "free";
+  return {
+    answer: data.answer,
+    model: data.model,
+    aiDecision: normalizeAiUsage(data.aiUsage, tier),
+  };
 }
 
 export async function productionPaymentOrders() {

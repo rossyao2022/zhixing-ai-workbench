@@ -90,6 +90,25 @@ CREATE TABLE IF NOT EXISTS ai_usage (
     PRIMARY KEY (user_id, period)
 );
 
+-- Idempotency and quota-reservation metadata only. Learner material and model
+-- answers are intentionally never persisted here.
+CREATE TABLE IF NOT EXISTS ai_runs (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    period TEXT NOT NULL,
+    lesson_id TEXT NOT NULL,
+    model TEXT NOT NULL CHECK (model IN ('deepseek-v4-flash', 'deepseek-v4-pro')),
+    status TEXT NOT NULL CHECK (status IN ('reserved', 'succeeded', 'failed')),
+    quota_reserved INTEGER NOT NULL DEFAULT 0 CHECK (quota_reserved IN (0, 1)),
+    error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (user_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_runs_user_time ON ai_runs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_runs_status_time ON ai_runs(status, updated_at ASC);
+
 CREATE TABLE IF NOT EXISTS redemption_ledger (
     id TEXT PRIMARY KEY,
     code_id TEXT NOT NULL UNIQUE REFERENCES redemption_codes(id) ON DELETE RESTRICT,
