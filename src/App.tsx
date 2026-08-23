@@ -274,8 +274,10 @@ function App() {
     productionContext()
       .then((context) => {
         if (cancelled) return;
+        const restoredProgress = loadProgress(context.user.id);
         cacheProductionAccount(context.user);
         saveSession(context.user.id);
+        setProgress(restoredProgress);
         setSessionUserId(context.user.id);
         setMembership(context.membership);
         setAiDecision(context.aiDecision);
@@ -499,7 +501,7 @@ function App() {
 
   if (sessionRestoring) {
     return (
-      <main className="auth-screen">
+      <main className="auth-screen" data-testid="session-restoring">
         <section className="auth-panel"><div className="auth-card"><div className="auth-heading"><span className="auth-icon">夸</span><div><h2>{t("auth.restoring")}</h2><p>{t("auth.restoringHint")}</p></div></div></div></section>
       </main>
     );
@@ -516,6 +518,14 @@ function App() {
           handleLoggedIn(account);
         }}
       />
+    );
+  }
+
+  if (!progress) {
+    return (
+      <main className="auth-screen" data-testid="session-restoring">
+        <section className="auth-panel"><div className="auth-card"><div className="auth-heading"><span className="auth-icon">夸</span><div><h2>{t("auth.restoring")}</h2><p>{t("auth.restoringHint")}</p></div></div></div></section>
+      </main>
     );
   }
 
@@ -611,7 +621,7 @@ function App() {
         ) : view === "home" ? (
           <Dashboard
             user={user}
-            progress={progress!}
+            progress={progress}
             completed={completed}
             buddyLevel={buddyLevel}
             nextLesson={nextLesson}
@@ -628,7 +638,7 @@ function App() {
         ) : view === "journey" ? (
           <JourneyMap completed={completed} onOpenLesson={openLesson} />
         ) : view === "buddy" ? (
-          <BuddyRoom progress={progress!} completed={completed} />
+          <BuddyRoom progress={progress} completed={completed} />
         ) : view === "membership" ? (
           <MembershipPage
             user={user}
@@ -648,7 +658,7 @@ function App() {
         ) : view === "profile" ? (
           <ProfilePage
             user={user}
-            progress={progress!}
+            progress={progress}
             membership={currentMembership}
             aiDecision={currentAiDecision}
             onMembership={() => setView("membership")}

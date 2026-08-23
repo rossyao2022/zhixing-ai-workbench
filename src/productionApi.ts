@@ -47,6 +47,7 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}) {
 
 export function productionApiEnabled() {
   if (typeof window === "undefined") return false;
+  if (import.meta.env.DEV && import.meta.env.VITE_KUAKUA_FORCE_PRODUCTION === "true") return true;
   const hostname = window.location.hostname.toLowerCase();
   return hostname !== "localhost" && hostname !== "127.0.0.1" && !hostname.endsWith(".localhost");
 }
