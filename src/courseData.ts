@@ -264,7 +264,7 @@ export const courseStages: CourseStage[] = [
         xp: 50,
         summary: "用 YC 的“窄而深”问题与 Jason Cohen 的个人—市场—客户匹配，筛选一个能在 12 周内获得真实证据的方向。",
         objectives: ["建立机会评分卡", "排查个人/市场/客户匹配", "把大赛道缩成可验证问题"],
-        practice: "为 3 个候选方向按五项标准打分，并写出淘汰理由。",
+        practice: "为 3 个候选方向按六项标准打分，并写出淘汰理由。",
         deliverable: "机会选择评分卡",
         sources: [source.strategyzerProfile, source.ycEssential, source.pgIdeas, source.jasonPmf, source.opc],
       },

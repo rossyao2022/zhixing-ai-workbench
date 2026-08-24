@@ -10,27 +10,38 @@ OUT = Path(os.environ.get("QINGMI_WEB_PPT_SCREENSHOTS", r"E:\晴幂科技\课程
 OUT.mkdir(parents=True, exist_ok=True)
 
 
+def browser_launch_options():
+    executable = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE")
+    if not executable:
+        system_chrome = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+        executable = str(system_chrome) if system_chrome.exists() else None
+    return {"headless": True, **({"executable_path": executable} if executable else {})}
+
+
 def verify_deck(page, mobile=False):
     console_errors = []
     page_errors = []
-    page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+    failed_responses = []
+    page.on("console", lambda msg: console_errors.append({"text": msg.text, "location": msg.location}) if msg.type == "error" else None)
     page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+    page.on("response", lambda response: failed_responses.append({"status": response.status, "url": response.url}) if response.status >= 400 else None)
     page.goto(BASE, wait_until="networkidle")
-    assert page.locator(".deck > .slide").count() == 34
+    slide_count = page.locator(".deck > .slide").count()
+    assert slide_count == 35, {"expected": 35, "actual": slide_count, "base": BASE, "url": page.url, "title": page.title()}
     assert page.locator(".deck > .practice-slide").count() == 4
     assert page.locator(".deck > .slide.is-active").count() == 1
-    assert page.locator("#counter").inner_text().strip() == "01 / 34"
+    assert page.locator("#counter").inner_text().strip() == "01 / 35"
     assert page.locator(".slide.is-active h1").inner_text().strip() == "选对战场"
 
     page.locator("#nextBtn").click()
-    assert page.locator("#counter").inner_text().strip() == "02 / 34"
+    assert page.locator("#counter").inner_text().strip() == "02 / 35"
     page.keyboard.press("ArrowRight")
-    assert page.locator("#counter").inner_text().strip() == "03 / 34"
+    assert page.locator("#counter").inner_text().strip() == "03 / 35"
     page.keyboard.press("n")
     assert "2:00—3:00" in page.locator("#notesPanel").inner_text()
     page.keyboard.press("n")
     page.locator("#menuBtn").click()
-    assert page.locator("#slideMenu.is-open button").count() == 34
+    assert page.locator("#slideMenu.is-open button").count() == 35
     page.keyboard.press("Escape")
 
     page.evaluate("window.qingmiDeck.go(0)")
@@ -54,13 +65,13 @@ def verify_deck(page, mobile=False):
         assert overflow <= 2, overflow
         assert page.locator(".slide.is-active .canvas-wrap").evaluate("el => el.scrollWidth > el.clientWidth")
 
-    assert not console_errors, console_errors
+    assert not console_errors, {"console": console_errors, "responses": failed_responses}
     assert not page_errors, page_errors
-    return {"console_errors": len(console_errors), "page_errors": len(page_errors)}
+    return {"console_errors": len(console_errors), "page_errors": len(page_errors), "failed_responses": len(failed_responses)}
 
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
+    browser = p.chromium.launch(**browser_launch_options())
     desktop = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
     desktop_result = verify_deck(desktop)
     desktop.close()
@@ -78,7 +89,7 @@ with sync_playwright() as p:
 
 print(json.dumps({
     "status": "passed",
-    "slides": 34,
+    "slides": 35,
     "desktop": desktop_result,
     "mobile": mobile_result,
     "editor": editor_result,
