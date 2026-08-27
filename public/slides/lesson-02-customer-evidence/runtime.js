@@ -64,7 +64,7 @@
     if(!document.fullscreenElement){(document.documentElement.requestFullscreen||function(){}).call(document.documentElement)}
     else if(document.exitFullscreen)document.exitFullscreen();
   }
-  function isTyping(target){return target&&(/INPUT|TEXTAREA|SELECT/.test(target.tagName)||target.isContentEditable)}
+  function isTyping(target){return target&&(/INPUT|TEXTAREA|SELECT/.test(target.tagName)||target.isContentEditable||target.closest(".deepseek-lab,.coach-modal"))}
 
   document.getElementById("prevBtn").addEventListener("click",function(){go(index-1)});
   document.getElementById("nextBtn").addEventListener("click",function(){go(index+1)});
@@ -75,7 +75,9 @@
   help.addEventListener("click",function(e){if(e.target===help)toggleHelp()});
 
   window.addEventListener("keydown",function(e){
+    if(document.body.classList.contains("ds-open"))return;
     if(isTyping(e.target))return;
+    if(e.target&&e.target.tagName==="BUTTON"&&(e.key===" "||e.key==="Enter"))return;
     if(e.key==="ArrowRight"||e.key==="PageDown"||e.key===" "){e.preventDefault();go(index+1)}
     else if(e.key==="ArrowLeft"||e.key==="PageUp"){e.preventDefault();go(index-1)}
     else if(e.key==="Home"){e.preventDefault();go(0)}
@@ -88,7 +90,7 @@
   });
 
   deck.addEventListener("touchstart",function(e){
-    if(e.touches.length!==1||e.target.closest("video,.canvas-wrap,.assumption-scroll,.controls"))return;
+    if(document.body.classList.contains("ds-open")||e.touches.length!==1||e.target.closest("video,.canvas-wrap,.assumption-scroll,.controls,.deepseek-lab,.coach-modal,button,input,textarea,select"))return;
     touchStart={x:e.touches[0].clientX,y:e.touches[0].clientY};
   },{passive:true});
   deck.addEventListener("touchend",function(e){

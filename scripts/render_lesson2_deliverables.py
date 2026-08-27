@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -31,6 +32,31 @@ def main():
             launch_options["executable_path"] = CHROME
         browser = playwright.chromium.launch(**launch_options)
         page = browser.new_page(viewport={"width": 1920, "height": 1080}, device_scale_factor=1)
+        local_origin = f"{urlsplit(URL).scheme}://{urlsplit(URL).netloc}"
+
+        def mock_account(route):
+            if route.request.method == "OPTIONS":
+                route.fulfill(status=204, headers={
+                    "access-control-allow-origin": local_origin,
+                    "access-control-allow-credentials": "true",
+                    "access-control-allow-headers": "content-type",
+                    "access-control-allow-methods": "GET,OPTIONS",
+                })
+                return
+            route.fulfill(status=200, headers={
+                "content-type": "application/json; charset=utf-8",
+                "access-control-allow-origin": local_origin,
+                "access-control-allow-credentials": "true",
+            }, body=json.dumps({
+                "ok": True,
+                "data": {
+                    "user": {"id": "render-user", "name": "课件渲染", "role": "learner"},
+                    "membership": {"tier": "free", "status": "free"},
+                    "aiUsage": {"allowed": False, "mode": "blocked", "usedRuns": 0, "limit": 0, "remainingRuns": 0},
+                },
+            }, ensure_ascii=False))
+
+        page.route("https://www.happykua.com/kuakua-ai-api/me", mock_account)
         console_errors = []
         page_errors = []
         failed_responses = []
@@ -48,8 +74,8 @@ def main():
 
         slides = page.locator(".deck > .slide")
         count = slides.count()
-        if count != 35:
-            raise RuntimeError(f"Expected 35 slides, got {count} at {page.url}")
+        if count != 26:
+            raise RuntimeError(f"Expected 26 slides, got {count} at {page.url}")
 
         entries = []
         for index in range(count):

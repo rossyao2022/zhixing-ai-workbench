@@ -80,6 +80,7 @@
     slot.querySelectorAll(TEXT_SEL).forEach(function (el) {
       if (el.closest("aside.notes")) return;
       if (el.closest(".ed-obj")) return;
+      if (el.closest(".deepseek-lab")) return;
       el.setAttribute("data-ed-text", "");
     });
   }
@@ -254,8 +255,9 @@
   /* ---------- export ---------- */
   function buildExportHTML() {
     var root = document.documentElement.cloneNode(true);
+    root.querySelectorAll("[data-no-export]").forEach(function (n) { n.remove(); });
     root.querySelectorAll("#ed-launch,#ed-bar,#ed-toast,#ed-film").forEach(function (n) { n.remove(); });
-    root.querySelectorAll('link[href$="editor.css"],script[src$="editor.js"]').forEach(function (n) { n.remove(); });
+    root.querySelectorAll('link[href$="editor.css"],script[src$="editor.js"],script[src$="deepseek-practice.js"]').forEach(function (n) { n.remove(); });
     root.querySelector("body").classList.remove("ed-on", "is-preview");
     root.querySelectorAll(".slide").forEach(function (s) {
       s.querySelectorAll("[contenteditable]").forEach(function (n) { n.removeAttribute("contenteditable"); });
@@ -343,6 +345,7 @@
     updatePage();
     document.addEventListener("keydown", function (e) {
       if (e.key !== "e" && e.key !== "E") return;
+      if (document.body.classList.contains("ds-open")) return;
       var t = document.activeElement;
       if (t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
       if (!isOn()) { toggleEdit(true); e.preventDefault(); }
@@ -372,9 +375,12 @@
       var exp = buildExportHTML();
       var stored = localStorage.getItem(KEY) || "";
       var hasEditorScript = /<script[^>]+src=["'][^"']*editor\.js/i.test(exp);
+      var hasDeepSeekScript = /<script[^>]+src=["'][^"']*deepseek-practice\.js/i.test(exp);
+      var exportedAiLaunch = /class=["'][^"']*ds-launch/i.test(exp);
       var ok = objs >= 2 && lenAfterAdds >= 3 && afterUndo === lenAfterAdds - 2 &&
         movedOk && exp.indexOf("data:image/png") >= 0 && exp.indexOf("ed-textbox") >= 0 &&
-        !hasEditorScript && stored.indexOf("ed-obj") >= 0;
+        !hasEditorScript && !hasDeepSeekScript && !exportedAiLaunch &&
+        stored.indexOf("ed-obj") >= 0 && stored.indexOf("ds-launch") >= 0;
       try { localStorage.removeItem(KEY); } catch (e) {}
       document.body.setAttribute("data-edtest",
         ok ? "PASS objs=" + objs + " hist=" + lenAfterAdds + " moved=" + movedOk
