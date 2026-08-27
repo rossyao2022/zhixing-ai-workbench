@@ -17,8 +17,11 @@ from server.app import (
     DeepSeekProviderError,
     KuakuaServer,
     PLANS,
+    _decode_json_object,
+    _extract_provider_content,
     call_deepseek_coach,
     initialize_database,
+    normalize_coach_answer,
 )
 
 
@@ -534,6 +537,9 @@ class MembershipApiTest(unittest.TestCase):
         self.assertEqual(sent["model"], "deepseek-v4-flash")
         self.assertEqual(sent["thinking"], {"type": "disabled"})
         self.assertEqual(sent["response_format"], {"type": "json_object"})
+        self.assertEqual(sent["max_tokens"], 1_800)
+        self.assertIn('"acknowledgement"', sent["messages"][0]["content"])
+        self.assertIn("不得另造顶层字段", sent["messages"][0]["content"])
         self.assertTrue(sent["user_id"].startswith("kuakua_"))
         self.assertNotIn("usr_internal_123", sent["user_id"])
         self.assertEqual(captured_request.full_url, "https://api.deepseek.com/chat/completions")
@@ -569,6 +575,218 @@ class MembershipApiTest(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(document["error"]["code"], "ORIGIN_DENIED")
         self.assertNotIn("Access-Control-Allow-Origin", headers)
+
+
+class DeepSeekProviderCompatibilityTest(unittest.TestCase):
+    def test_truncated_choice_is_rejected_with_retryable_provider_error(self) -> None:
+        with self.assertRaises(DeepSeekProviderError) as raised:
+            _extract_provider_content(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "length",
+                            "message": {"content": '{"acknowledgement":"未完整"'},
+                        }
+                    ]
+                }
+            )
+        self.assertEqual(raised.exception.code, "AI_PROVIDER_TRUNCATED_RESPONSE")
+        self.assertEqual(raised.exception.status, 502)
+
+    def test_filtered_choice_is_not_mistaken_for_billable_coaching(self) -> None:
+        with self.assertRaises(DeepSeekProviderError) as raised:
+            _extract_provider_content(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "content_filter",
+                            "message": {"content": '{"summary":"blocked"}'},
+                        }
+                    ]
+                }
+            )
+        self.assertEqual(raised.exception.code, "AI_PROVIDER_REJECTED_RESPONSE")
+
+    def test_json_object_can_be_fenced_and_surrounded_by_explanation(self) -> None:
+        expected = {
+            "acknowledgement": "已识别真实行为。",
+            "strengths": ["问题具体"],
+            "gaps": ["缺少时间"],
+            "questions": ["上次发生在什么时候？"],
+            "nextAction": "补充最近一次行为。",
+        }
+        content = (
+            "下面是按要求整理的结果：\n```json\n"
+            + json.dumps(expected, ensure_ascii=False)
+            + "\n```\n以上内容可直接使用。"
+        )
+        self.assertEqual(_decode_json_object(content), expected)
+
+    def test_json_extraction_prefers_the_coach_object_over_an_inline_example(self) -> None:
+        expected = {
+            "acknowledgement": "已完成检查。",
+            "strengths": ["有真实对象"],
+            "gaps": ["缺时间"],
+            "questions": ["哪天发生？"],
+            "nextAction": "补日期。",
+        }
+        content = (
+            '不要返回示例 {"foo":"bar"}。实际结果：'
+            + json.dumps(expected, ensure_ascii=False)
+        )
+        self.assertEqual(_decode_json_object(content), expected)
+
+    def test_wrappers_and_object_arrays_prefer_the_complete_coach_answer(self) -> None:
+        expected = {
+            "acknowledgement": "客户给出了具体回应。",
+            "strengths": ["问到了过去行为"],
+            "gaps": ["还缺现有替代"],
+            "questions": ["当时用什么方式解决？"],
+            "nextAction": "继续追问一个现有替代。",
+        }
+        wrapped = {"summary": "provider metadata", "data": {"answer": expected}}
+        self.assertEqual(normalize_coach_answer(wrapped), expected)
+        self.assertEqual(_decode_json_object(json.dumps([{"foo": "bar"}, expected])), expected)
+
+    def test_openai_compatible_content_shapes_are_extracted(self) -> None:
+        answer = {
+            "acknowledgement": "已收到。",
+            "strengths": ["对象明确"],
+            "gaps": ["证据不足"],
+            "questions": ["最近一次是什么时候？"],
+            "nextAction": "补一条事实。",
+        }
+        encoded = json.dumps(answer, ensure_ascii=False)
+        documents = [
+            {"choices": [{"message": {"content": [{"type": "text", "text": encoded}]}}]},
+            {"choices": {"message": {"content": {"type": "text", "text": {"value": encoded}}}}},
+            {"choices": [{"text": encoded}]},
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [{"function": {"arguments": encoded}}],
+                        }
+                    }
+                ]
+            },
+            {"output": [{"type": "message", "content": [{"type": "output_text", "text": encoded}]}]},
+            {"answer": answer},
+        ]
+        for document in documents:
+            with self.subTest(document=document):
+                self.assertEqual(_decode_json_object(_extract_provider_content(document)), answer)
+
+    def test_answer_field_type_drift_is_normalized_to_frontend_contract(self) -> None:
+        answer = normalize_coach_answer(
+            {
+                "acknowledgment": {"text": "你已经描述了最近一次真实行为。"},
+                "strengths": "- 对象明确\n- 有具体场景",
+                "gaps": {"1": "缺少原话", "2": "缺少时间"},
+                "question": "当时对方具体说了什么？",
+                "next_step": ["补录客户原话", "标注访谈日期"],
+                "improved_draft": {"text": "客户在 8 月 20 日主动询问了价格。"},
+                "evaluation": {
+                    "行为证据": {"status": "部分达标", "feedback": "有描述，缺原话。"},
+                    "对象范围": {"status": True, "note": "对象清楚。"},
+                    "付费信号": {"score": 0, "reason": "尚未出现。"},
+                },
+            }
+        )
+        self.assertEqual(answer["strengths"], ["对象明确", "有具体场景"])
+        self.assertEqual(answer["gaps"], ["缺少原话", "缺少时间"])
+        self.assertEqual(answer["questions"], ["当时对方具体说了什么？"])
+        self.assertEqual(answer["nextAction"], "补录客户原话\n标注访谈日期")
+        self.assertEqual(answer["improvedDraft"], "客户在 8 月 20 日主动询问了价格。")
+        self.assertEqual(
+            [item["status"] for item in answer["rubric"]],
+            ["partial", "met", "missing"],
+        )
+
+    def test_partial_or_moderation_payload_is_rejected_instead_of_fabricating_defaults(self) -> None:
+        for payload in (
+            {"summary": "已完成材料检查。"},
+            {"feedback": "provider moderation fallback"},
+            {"summary": "blocked", "action": "try again"},
+            {"acknowledgement": 1, "nextAction": 2, "questions": [3]},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(DeepSeekProviderError):
+                normalize_coach_answer(payload)
+
+    def test_roleplay_and_chinese_aliases_are_normalized_without_invented_feedback(self) -> None:
+        answer = normalize_coach_answer(
+            {
+                "客户回答": "上周五我让助理把三个群的记录复制到表格里。",
+                "亮点": "问到了最近一次真实行为",
+                "不足": [],
+                "下一问": "当时为什么没有继续使用现有工具？",
+                "训练动作": "围绕客户原话继续追问现有替代。",
+            }
+        )
+        self.assertEqual(answer["strengths"], ["问到了最近一次真实行为"])
+        self.assertEqual(answer["gaps"], [])
+        self.assertEqual(answer["questions"], ["当时为什么没有继续使用现有工具？"])
+
+    def test_empty_or_non_json_provider_answers_remain_rejected(self) -> None:
+        with self.assertRaises(DeepSeekProviderError):
+            normalize_coach_answer({})
+        with self.assertRaises(DeepSeekProviderError):
+            normalize_coach_answer({"unrelated": "not a coaching answer"})
+        with self.assertRaises(DeepSeekProviderError):
+            _decode_json_object("只有一段说明，没有结构化结果。")
+
+    def test_call_deepseek_accepts_segmented_content_and_type_drift(self) -> None:
+        provider_answer = {
+            "acknowledgment": "已找到一条真实行为。",
+            "strengths": "对象明确；时间明确",
+            "gaps": "还没有客户原话",
+            "questions": [{"text": "客户当时的原话是什么？"}],
+            "next_action": "补录原话并标注来源。",
+        }
+        content = (
+            "这是结构化反馈：\n```json\n"
+            + json.dumps({"data": {"answer": provider_answer}}, ensure_ascii=False)
+            + "\n```"
+        )
+        upstream = {
+            "model": "deepseek-v4-flash",
+            "choices": [{"message": {"content": [{"type": "text", "text": content}]}}],
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit: int) -> bytes:
+                return b"\xef\xbb\xbf" + json.dumps(upstream, ensure_ascii=False).encode("utf-8")
+
+        config = Config(
+            host="127.0.0.1",
+            port=0,
+            database_path=Path("provider-compat-test.sqlite3"),
+            payment_qr_path=Path("provider-compat-test.png"),
+            allowed_origins=frozenset(),
+            deepseek_api_key="test-key",
+        )
+        with mock.patch("server.app.urllib_request.urlopen", return_value=FakeResponse()):
+            answer, model = call_deepseek_coach(
+                config,
+                user_id="usr_compat_test",
+                lesson_id="market-02",
+                lesson_title="市场专场",
+                goal="验证真实需求",
+                material="这里是一段长度足够的真实客户访谈练习材料。",
+                criteria=["对象明确", "行为可核验"],
+                mode="review",
+            )
+        self.assertEqual(model, "deepseek-v4-flash")
+        self.assertEqual(answer["acknowledgement"], "已找到一条真实行为。")
+        self.assertEqual(answer["strengths"], ["对象明确", "时间明确"])
+        self.assertEqual(answer["questions"], ["客户当时的原话是什么？"])
 
 
 if __name__ == "__main__":
