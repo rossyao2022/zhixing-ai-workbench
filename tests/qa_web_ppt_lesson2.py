@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -26,11 +27,14 @@ def browser_launch_options():
 
 
 def install_api_mock(page, captured, fail_first=False):
+    parsed_base = urlsplit(BASE)
+    mock_origin = f"{parsed_base.scheme}://{parsed_base.netloc}"
+
     def handle(route):
         request = route.request
         if request.method == "OPTIONS":
             route.fulfill(status=204, headers={
-                "access-control-allow-origin": "http://127.0.0.1:4175",
+                "access-control-allow-origin": mock_origin,
                 "access-control-allow-credentials": "true",
                 "access-control-allow-headers": "content-type",
                 "access-control-allow-methods": "GET,POST,OPTIONS",
@@ -38,7 +42,7 @@ def install_api_mock(page, captured, fail_first=False):
             return
         headers = {
             "content-type": "application/json; charset=utf-8",
-            "access-control-allow-origin": "http://127.0.0.1:4175",
+            "access-control-allow-origin": mock_origin,
             "access-control-allow-credentials": "true",
         }
         if request.url.endswith("/me"):
@@ -243,7 +247,7 @@ with sync_playwright() as playwright:
 
     editor = browser.new_page(viewport={"width": 1280, "height": 800})
     install_api_mock(editor, [])
-    editor.goto(BASE + "?edtest=1", wait_until="domcontentloaded")
+    editor.goto(BASE + ("&" if "?" in BASE else "?") + "edtest=1", wait_until="domcontentloaded")
     editor.wait_for_function("document.body.dataset.edtest && document.body.dataset.edtest.startsWith('PASS')", timeout=20000)
     editor_result = editor.get_attribute("body", "data-edtest")
     editor.evaluate("window.qingmiDeck.go(17)")
