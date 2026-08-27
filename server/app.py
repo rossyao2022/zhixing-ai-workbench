@@ -779,6 +779,12 @@ def _extract_provider_content(document: Any) -> str:
                         "AI_PROVIDER_REJECTED_RESPONSE",
                         "AI 教练本次未能生成有效反馈，请按同一请求编号重试。",
                     )
+                if finish_reason not in {None, "stop"}:
+                    raise DeepSeekProviderError(
+                        502,
+                        "AI_PROVIDER_UNEXPECTED_FINISH_REASON",
+                        "AI 教练本次未正常完成，请按同一请求编号重试。",
+                    )
                 candidates: list[Any] = []
                 for container_name in ("message", "delta"):
                     container = choice.get(container_name)

@@ -607,6 +607,34 @@ class DeepSeekProviderCompatibilityTest(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, "AI_PROVIDER_REJECTED_RESPONSE")
 
+    def test_unrequested_tool_call_is_not_mistaken_for_completed_coaching(self) -> None:
+        valid_looking_arguments = json.dumps(
+            {
+                "acknowledgement": "不应结算",
+                "strengths": ["占位"],
+                "gaps": ["占位"],
+                "questions": ["占位？"],
+                "nextAction": "占位",
+            },
+            ensure_ascii=False,
+        )
+        with self.assertRaises(DeepSeekProviderError) as raised:
+            _extract_provider_content(
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "tool_calls",
+                            "message": {
+                                "tool_calls": [
+                                    {"function": {"arguments": valid_looking_arguments}}
+                                ]
+                            },
+                        }
+                    ]
+                }
+            )
+        self.assertEqual(raised.exception.code, "AI_PROVIDER_UNEXPECTED_FINISH_REASON")
+
     def test_json_object_can_be_fenced_and_surrounded_by_explanation(self) -> None:
         expected = {
             "acknowledgement": "已识别真实行为。",
