@@ -112,6 +112,83 @@
         { label: "阈值红队", mode: "challenge", focus: "尝试证明实验无法区分成功失败，重点攻击虚荣指标、样本错配和实验后改阈值。" },
         { label: "Pitch会审", mode: "review", focus: "检查实验卡与Pitch能否由未参与者直接执行、复述并据此做继续、修改或停止决策。" }
       ]
+    },
+    "book-click-hypothesis": {
+      title: "《Click》创始假设审查",
+      lessonId: "lesson3-book-click",
+      placeholder: "从《Click》创始假设罗盘带入：客户、问题、优势、竞争替代、方案、差异与证据编号。",
+      criteria: [
+        "客户具体到可以被招募的一类人",
+        "问题包含触发、过去行为和可观察后果",
+        "至少包含一种现实替代或维持现状",
+        "优势与差异可以被客户感知和比较",
+        "Foundation / Founding Hypothesis同时包含客户、问题、方案、替代与差异",
+        "真实证据、用户判断和待验证内容明确分开"
+      ],
+      basePrompt: "你是《Click》Foundation Hypothesis审查员。只使用用户提交的材料和证据编号，不补造客户事实。审核客户、问题、团队优势、竞争替代、方案与差异。完整结果放入improvedDraft：先给最可检验的一句Foundation / Founding Hypothesis，再逐项标注真实证据、用户判断或待验证，指出最大风险与下一条必须补充的证据。客户泛化、问题没有行为证据或差异不可比较时必须明确退回。acknowledgement写总体判断；strengths、gaps、questions写关键依据；nextAction写15分钟动作。",
+      variants: [
+        { label: "引导补齐罗盘", mode: "ask", focus: "优先追问缺失的客户、行为问题、真实替代和可比较差异，再给暂定假设。" },
+        { label: "创始假设红队", mode: "challenge", focus: "尝试证明客户不具体、问题不重要、替代更好或差异不可信；每个反驳都指向材料。" },
+        { label: "按五预测评审", mode: "review", focus: "按客户、问题、方案、竞争选择与差异可信度逐项验收，并给出唯一最大证据缺口。" }
+      ]
+    },
+    "book-story-map": {
+      title: "《User Story Mapping》首版切片评审",
+      lessonId: "lesson3-book-story-map",
+      placeholder: "从首版切片地图带入：触发、首个价值、目标时间、Release 1路径与Later清单。",
+      criteria: [
+        "Release 1从触发到结果端到端完整",
+        "每一步都以用户可理解的动作表达",
+        "首个价值是可观察变化而非页面事件",
+        "首版保持在三到七个关键动作",
+        "每个保留项都能说明对核心结果的必要性",
+        "暂不做项没有破坏知情、安全、付款或失败恢复"
+      ],
+      basePrompt: "你是Jeff Patton用户故事地图教练。把输入按触发到结果检查为用户动作，指出旅程缺口；逐项挑战Release 1是否对首个价值时刻必需，并提出更薄但完整的端到端切片。只引用已有证据，不新增客户需求。完整结果放入improvedDraft：写路径骨架、Release 1、Later、首个价值事件、时间到首值和失败恢复。acknowledgement写完整性结论；strengths、gaps、questions写关键取舍；nextAction写15分钟删减动作。",
+      variants: [
+        { label: "引导补齐路径", mode: "ask", focus: "先补触发、结果、首值证据和缺失步骤，再整理三到七步路径。" },
+        { label: "首版切片红队", mode: "challenge", focus: "默认每一步都可删除，只有能证明保护首值或必要边界时才保留。" },
+        { label: "按故事地图评审", mode: "review", focus: "验收骨架、首版切割线、首值标记、Later清单与时间到首值。" }
+      ]
+    },
+    "book-shapeup": {
+      title: "《Shape Up》范围熔炉",
+      lessonId: "lesson3-book-shapeup",
+      placeholder: "从范围熔炉带入：Problem、Appetite、粗粒度Solution、Rabbit Holes、No-gos、工作量与容量。",
+      criteria: [
+        "先固定Appetite再调整范围",
+        "方案达到rough、solved、bounded",
+        "至少说明一个Rabbit Hole及规避动作",
+        "至少说明一个明确No-go",
+        "工作量没有超过当前Appetite容量",
+        "没有把按时交付误写成市场需求已验证"
+      ],
+      basePrompt: "你是《Shape Up》Shaper。依据固定Appetite审核当前首版，不能增加功能或建议延长时间。严格区分交付风险与市场需求证据。完整结果放入improvedDraft：Problem、Appetite、Solution、Rabbit Holes、No-gos、必须删减项与Bet或No Bet建议；指出当前方案是否rough、solved、bounded。acknowledgement写下注结论；strengths、gaps、questions写关键范围风险；nextAction写15分钟Scope Hammer动作。",
+      variants: [
+        { label: "引导补齐Pitch", mode: "ask", focus: "先补具体问题故事、时间胃口、粗粒度元素、风险洞和禁区，再形成一页Pitch。" },
+        { label: "Scope Hammer", mode: "challenge", focus: "在不增加Appetite的前提下攻击每项范围，找出必须删减和可能拖期的长尾风险。" },
+        { label: "Bet / No Bet评审", mode: "review", focus: "按rough、solved、bounded与容量验收，明确能否下注及前置修复。" }
+      ]
+    },
+    "book-experiment-lab": {
+      title: "《Testing Business Ideas》实验红队",
+      lessonId: "lesson3-book-experiment",
+      placeholder: "从7天证据实验室带入：假设风险矩阵、锁定假设、对象、实验、行为指标、三档阈值与诚信护栏。",
+      criteria: [
+        "一次只测试一个高影响低证据假设",
+        "测试对象与目标客户一致",
+        "行为指标不使用点赞或未来购买意愿",
+        "通过、观察、失败阈值在执行前写定",
+        "实验七天内可执行且证据强度匹配风险",
+        "失败和数据不足都有明确下一步",
+        "AI模拟回答不冒充真实客户证据"
+      ],
+      basePrompt: "你是《Testing Business Ideas》商业实验设计审查员。只使用用户提供的假设与约束，不虚构实验结果、样本或基线。选择一项高影响低证据假设，比较三个由快到强的实验并推荐一个。完整结果放入improvedDraft：假设、测试对象、七天步骤、行为指标、预先阈值、时间成本、护栏、通过/失败/数据不足决策。acknowledgement写可证伪性；strengths、gaps、questions写证据质量与污染风险；nextAction写当天启动动作。",
+      variants: [
+        { label: "引导设计实验", mode: "ask", focus: "先补目标客户、行为指标、证据强度、阈值与伦理边界，再给可执行草案。" },
+        { label: "实验污染红队", mode: "challenge", focus: "攻击虚荣指标、样本错配、事后改阈值、AI伪证据与无法区分成功失败的问题。" },
+        { label: "按Test Card评审", mode: "review", focus: "验收假设、对象、实验、指标、阈值、停止线、护栏与三种决策。" }
+      ]
     }
   };
 
@@ -366,7 +443,8 @@
     completedWithoutResult = false;
     lastTrigger = trigger || document.activeElement;
     title.textContent = config.title;
-    material.value = lastAttempt ? lastAttempt.learnerText : "";
+    var seedMaterial = trigger && typeof trigger.getAttribute === "function" ? (trigger.getAttribute("data-material") || "") : "";
+    material.value = lastAttempt ? lastAttempt.learnerText : seedMaterial.slice(0, MAX_CHARS);
     material.placeholder = config.placeholder;
     charCount.textContent = String(material.value.length) + " / " + MAX_CHARS;
     message.textContent = lastAttempt ? "上次请求状态尚未确认。再次提交会复用原请求编号，不会创建新的计费请求。" : "";

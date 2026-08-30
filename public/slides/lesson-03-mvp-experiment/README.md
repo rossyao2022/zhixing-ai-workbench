@@ -1,63 +1,70 @@
 # 第三课｜把客户证据变成首版产品
 
-夸夸学习「超级个体全流程课」第 3 次课，90 分钟工作坊。
+夸夸学习「超级个体全流程课」第 3 次课。默认提供 90 分钟完整工作坊，同时提供可直接授课的 60 分钟核心版。
 
-线上课件：`/kuakua-ai/slides/lesson-03-mvp-experiment/index.html`
+- 90 分钟完整课件：`/kuakua-ai/slides/lesson-03-mvp-experiment/index.html`
+- 60 分钟授课版：`/kuakua-ai/slides/lesson-03-mvp-experiment/index.html?mode=60`
+- 四本书互动工作台：`/kuakua-ai/slides/lesson-03-mvp-experiment/book-lab.html`
+- 逐分钟讲师手册：`TEACHING-60MIN.md`
 
-## 课程目标
+## 课程闭环
 
-把第二课得到的客户证据，转成一个范围小、任务完整、可在 7 天内验证的首版产品。课程结束时，每位学员应完成：
+第二课留下的是客户证据，第三课把证据连续加工成四件可评审、可带走、可继续使用的项目资产：
 
-1. 一句可追溯证据的价值承诺；
-2. 一份首版保留、延后、人工替代与 No-gos 清单；
-3. 一个明确的首个价值时刻与五步路径；
-4. 一张预写阈值和停止线的 7 天实验卡；
-5. 一页可评审、可开工的产品 Pitch。
+1. 创始假设：客户、问题、优势、竞争与证据处在同一张图上；
+2. 首版切片：用完整用户任务而不是页面数量决定 MVP 范围；
+3. 有界 Pitch：固定投入，写清解法、风险洞、范围与 No-gos；
+4. 七天实验卡：在执行前锁定最高风险、行为指标、三档阈值和停止线。
 
-## 90 分钟讲课节奏
+四件作品在互动工作台中自动保存，并可一键复制或导出为 Markdown。免费用户可浏览全部方法与画布；有效 PRO / Max 会员才可填写、保存、导出和进入 AI 训练。每一本书都对应一个真实 DeepSeek 训练入口；AI 负责补问、挑战与评审，不得编造客户证据。
 
-| 时间 | 板块 | 课堂产出 |
+## 2026 核心书单
+
+| 顺序 | 书籍 | 本课只取一个关键能力 | 可视化工具 |
+| --- | --- | --- | --- |
+| 1 | Jake Knapp、John Zeratsky《Click》 | 在进入方案前形成可被证伪的 Foundation Hypothesis | 创始假设罗盘 |
+| 2 | Jeff Patton《User Story Mapping》 | 从用户目标到任务骨架，纵向切出薄而完整的 Release 1 | 首版故事地图 |
+| 3 | Ryan Singer《Shape Up》 | 用固定 appetite、风险洞和 No-gos 管住交付边界 | 有界产品 Pitch |
+| 4 | David J. Bland、Alex Osterwalder《Testing Business Ideas》 | 优先测试高影响、低证据假设，预写成功与停止条件 | 七天证据实验室 |
+
+《The Lean Startup》保留为课程外层的 Build–Measure–Learn 循环；《Sprint》转为完成创始假设之后的五日进阶实战。这样既不丢失经典框架，又让一小时课堂中的每一次阅读都有直接产出。
+
+## 60 分钟核心版
+
+| 时间 | 动作 | 课堂产出 |
 | --- | --- | --- |
-| 00:00–10:00 | 开场与三本核心书 | 本课判断句与阅读地图 |
-| 10:00–30:00 | 证据变价值 | 一句价值承诺 |
-| 30:00–54:00 | 把范围砍到完整 | 首版边界与版本标准 |
-| 54:00–72:00 | 首个价值时刻 | 五步价值路径与激活指标 |
-| 72:00–90:00 | 七天验证 | Test Card 与一页产品 Pitch |
+| 00:00–07:00 | 定义问题、解释四书链路 | 选定一个真实项目与待验证问题 |
+| 07:00–18:00 | 《Click》实操 | 一句可追溯证据的创始假设 |
+| 18:00–31:00 | 《User Story Mapping》实操 | 首个价值时刻与 Release 1 完整切片 |
+| 31:00–42:00 | 《Shape Up》实操 | 固定投入、范围、风险洞和 No-gos |
+| 42:00–54:00 | 《Testing Business Ideas》实操 | 一张可判定的七天实验卡 |
+| 54:00–60:00 | 双人会审与行动承诺 | 一页产品决策包与下一步日历动作 |
 
-## 五个真实 DeepSeek 练习
+## 真实 DeepSeek 练习
 
-每个练习提供「引导补全 / 反方挑战 / 按标准评审」三种提示角度，免费用户可复制提示词，PRO / Max 会员可在课件内调用真实 DeepSeek。
-
-1. 证据变价值主张：分开证据、推断与未知，生成可观察的一句承诺。
-2. 首版范围砍半：至少删除或后置一半工作，同时保护完整任务与安全底线。
-3. 首版标准选择：区分原型、MVP、SLC 与 Jason Fried 的 MPV1。
-4. 首个价值路径：定义价值时刻，把入口到结果压缩为五步以内。
-5. 7 天实验与一页 Pitch：预写行为指标、三档阈值、停止线、风险洞和 No-gos。
-
-课件案例页另附夸夸原创 24 秒微课《从访谈证据到 MVP》，用于板块转场与课后复习。
-
-## 三本核心书
-
-- Eric Ries，《精益创业》：用构建—测量—学习获得能改变决策的验证性学习。
-- David J. Bland、Alex Osterwalder，《测试商业创意》：按最高风险选择实验，并在测试前写清指标与阈值。
-- Jake Knapp、John Zeratsky、Braden Kowitz，《设计冲刺》：在重投入前，用短周期原型和真人测试看见关键反应。
+本课程共保留九个练习场景：90 分钟课件内有五个专项练习，四本书互动工作台再提供四个连续项目练习。每个场景都有「引导补全 / 反方挑战 / 按标准评审」三种模式，并复用同一会员权限、请求编号、配额和失败重试机制。
 
 ## 一手参考资料
 
-- [Strategyzer｜Value Proposition Canvas](https://www.strategyzer.com/library/the-value-proposition-canvas)
-- [Strategyzer｜Validate Your Ideas with the Test Card](https://www.strategyzer.com/library/validate-your-ideas-with-the-test-card)
-- [Y Combinator｜Practical Design: MVP Spec](https://www.ycombinator.com/blog/practical-design-mvp)
-- [Jason Cohen｜Simple, Lovable, Complete](https://longform.asmartbear.com/slc/)
-- [Jason Fried｜Version 1 is for you / MPV1](https://world.hey.com/jason/version-1-is-for-you-658422f3)
-- [37signals｜Half, Not Half-Assed](https://basecamp.com/gettingreal/05.1-half-not-half-assed)
+- [Character｜Click 与 Foundation Hypothesis](https://www.character.vc/click)
+- [Character｜Foundation Sprint Guide](https://www.character.vc/guide/foundation-sprint)
+- [Jeff Patton｜Story Mapping Quick Reference](https://www.jpattonassociates.com/wp-content/uploads/2015/03/story_mapping.pdf)
+- [O’Reilly｜User Story Mapping](https://www.oreilly.com/library/view/user-story-mapping/9781491904893/)
+- [Shape Up｜完整在线原著](https://basecamp.com/shapeup)
 - [Shape Up｜Write the Pitch](https://basecamp.com/shapeup/1.5-chapter-06)
-- [Shape Up｜Risks and Rabbit Holes](https://basecamp.com/shapeup/1.4-chapter-05)
+- [Strategyzer｜Testing Business Ideas](https://www.strategyzer.com/library/testing-business-ideas-book)
+- [Strategyzer｜Validate Your Ideas with the Test Card](https://www.strategyzer.com/library/validate-your-ideas-with-the-test-card)
+- [The Lean Startup｜官方书页](https://theleanstartup.com/book)
 
-## 课后任务
+术语说明：Character 的《Click》书页写作 **Foundation Hypothesis**，官方 Foundation Sprint 操作指南在最终句式处也使用 **Founding Hypothesis**。本课中文统一称“创始假设”，界面英文并列保留两种官方写法，避免把来源差异误写成概念差异。
 
-7 天内邀请 10–20 位匹配用户完成一个真实任务，只测试一项最高风险假设。记录首个价值达成率、抵达价值所需时间和价值后的下一行为；第 7 天只做一个决定：继续、修改或停止。
+## 七天课后任务与第四课接口
 
-## 操作与安全边界
+七天内邀请 10–20 位匹配用户完成一个真实任务，只测试一项最高风险假设。记录首个价值达成率、抵达价值所需时间和价值后的下一行为；第七天只做一个决定：继续、修改或停止。
+
+第三课导出的“一页产品决策包”会成为第四课《界面与体验设计》的输入。进入第四课前，必须带齐：目标用户、首个价值时刻、Release 1 路径、No-gos、实验结果和最终决策；缺少真实证据时不得用 AI 补造。
+
+## 安全边界
 
 - 客户材料先脱敏，不输入姓名、电话、邮箱、合同号、API Key 或未公开机密。
 - AI 不得生成客户证据、基线、购买结论或统计结论；缺失内容必须标为未知。

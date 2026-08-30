@@ -71,7 +71,7 @@ def main() -> None:
         checks["catalogue"] = {
             "stages": page.locator(".stage-disclosure").count() == 8,
             "lessons": page.locator(".lesson-row").count() == 32,
-            "books": page.locator(".reading-disclosure a").count() == 24,
+            "books": page.locator(".reading-disclosure a").count() == 25,
         }
 
         page.locator(".lesson-row").first.click()

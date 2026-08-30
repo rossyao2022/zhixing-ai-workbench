@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f4f0e8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="夸夸学习第三课四本核心书互动工作台：从创始假设、首版切片、有界 Pitch 到 7 天真实实验。">
+  <title>四本书互动工作台｜第三课｜夸夸学习 AI</title>
+  <link rel="icon" href="favicon.svg">
+  <link rel="stylesheet" href="slides.css">
+  <link rel="stylesheet" href="book-lab.css">
+</head>
+<body class="book-lab-page book-lab-locked" data-active-tool="click" data-lab-access="checking">
+<a class="skip-link" href="#bookWorkspace">跳到工作区</a>
+
+<header class="lab-topbar">
+  <a class="lab-brand" href="index.html" aria-label="返回第三课课件">
+    <span class="lab-brand-mark">Q</span>
+    <span>夸夸学习 AI<small>第三课 · BOOK LAB</small></span>
+  </a>
+  <label class="project-name"><span>项目名称</span><input id="projectName" maxlength="60" placeholder="例如：夸夸作业教练"></label>
+  <div class="lab-progress" aria-label="四本书任务总进度">
+    <span class="progress-orbit" id="progressOrbit"><b id="progressNumber">0%</b></span>
+    <span><b id="progressLabel">0 / 4 已达标</b><small id="saveStatus">正在建立本地草稿…</small></span>
+  </div>
+  <div class="top-actions">
+    <button type="button" id="copyAll">复制成果</button>
+    <button type="button" id="exportAll">导出 .md</button>
+    <button type="button" id="resetAll" class="quiet-action">重置</button>
+    <a href="index.html?mode=60#slide=1">60 分钟课件</a>
+  </div>
+</header>
+
+<div class="lab-shell">
+  <aside class="book-shelf" aria-label="四本书工具目录">
+    <div class="shelf-intro">
+      <span>ONE PROJECT · FOUR BOOKS</span>
+      <h1>把书读成<br><em>四件作品</em></h1>
+      <p>上一本的输出，会自动进入下一本。你不是在做读书摘要，而是在完成自己的首版产品。</p>
+    </div>
+    <nav class="book-tabs" id="bookTabs" role="tablist" aria-label="四本书互动工具">
+      <button type="button" class="book-tab active" data-tool="click" role="tab" id="tabClick" aria-controls="panelClick" aria-selected="true">
+        <i style="--spine:#ff6a2a">01</i><span><b>《Click》</b><small>创始假设罗盘</small></span><strong data-tool-state="click">草稿</strong>
+      </button>
+      <button type="button" class="book-tab" data-tool="story" role="tab" id="tabStory" aria-controls="panelStory" aria-selected="false">
+        <i style="--spine:#356cff">02</i><span><b>《User Story Mapping》</b><small>首版切片地图</small></span><strong data-tool-state="story">未开始</strong>
+      </button>
+      <button type="button" class="book-tab" data-tool="shape" role="tab" id="tabShape" aria-controls="panelShape" aria-selected="false">
+        <i style="--spine:#18a06a">03</i><span><b>《Shape Up》</b><small>范围熔炉</small></span><strong data-tool-state="shape">未开始</strong>
+      </button>
+      <button type="button" class="book-tab" data-tool="test" role="tab" id="tabTest" aria-controls="panelTest" aria-selected="false">
+        <i style="--spine:#d9474f">04</i><span><b>《Testing Business Ideas》</b><small>7 天证据实验室</small></span><strong data-tool-state="test">未开始</strong>
+      </button>
+    </nav>
+    <div class="learning-loop" aria-label="精益创业学习循环">
+      <span>总循环 · 《精益创业》</span>
+      <div><b>假设</b><i>→</i><b>作品</b><i>→</i><b>证据</b><i>→</i><b>决策</b></div>
+      <small>《Sprint》移入后续五日进阶实战营。</small>
+    </div>
+  </aside>
+
+  <main class="book-workspace" id="bookWorkspace">
+    <section class="lab-access-gate" id="labAccessGate" aria-live="polite">
+      <span class="access-orbit">Q</span>
+      <div><b id="labAccessTitle">正在核验学习权益</b><p id="labAccessMessage">四本书内容可以浏览；填写、保存、AI 会审和导出需要有效 PRO 或 Max 会员。</p></div>
+      <button type="button" id="labAccessRetry" hidden>重新核验</button>
+      <a id="labAccessAction" href="https://happykua.com/kuakua-ai/" target="_blank" rel="noopener noreferrer">登录 / 成为会员</a>
+    </section>
+    <section class="workspace-hero">
+      <div>
+        <p class="lab-eyebrow">不是“看懂了”，而是“做出来”</p>
+        <h2>四本书，组成一条<span>首版产品流水线</span></h2>
+      </div>
+      <div class="pipeline" aria-label="工具流转顺序">
+        <button type="button" data-jump-tool="click"><b>01</b>创始假设</button><i>→</i>
+        <button type="button" data-jump-tool="story"><b>02</b>首版切片</button><i>→</i>
+        <button type="button" data-jump-tool="shape"><b>03</b>有界 Pitch</button><i>→</i>
+        <button type="button" data-jump-tool="test"><b>04</b>7 天实验</button>
+      </div>
+    </section>
+
+    <section class="tool-panel active" data-tool-panel="click" id="panelClick" role="tabpanel" aria-labelledby="tabClick clickTitle">
+      <header class="tool-heading" style="--tool:#ff6a2a">
+        <div class="book-number">01</div>
+        <div><p>CLICK · JAKE KNAPP &amp; JOHN ZERATSKY</p><h2 id="clickTitle">创始假设罗盘</h2><span>选定为谁解决什么、凭什么被选择，再谈首版方案。</span></div>
+        <a href="https://www.character.vc/click" target="_blank" rel="noopener noreferrer">官方书页 ↗</a>
+      </header>
+      <div class="book-method"><b>本书在第三课中的作用</b><p>《Click》的 Foundation Sprint 把客户、问题、优势、替代、方案与差异合成一句可测试的 Foundation Hypothesis；官方操作指南在最终句式处也称 Founding Hypothesis。这里压缩成 10 分钟个人版。</p></div>
+      <div class="compass-grid">
+        <label class="compass-card" style="--card:#ff6a2a"><span>WHO · 客户</span><textarea data-field="click.customer" rows="4" placeholder="能被具体找到的一类人；不要写“所有企业”"></textarea><select data-field="click.customerKind" aria-label="客户信息来源"><option value="evidence">真实证据</option><option value="judgment">用户判断</option><option value="unknown">待验证</option></select></label>
+        <label class="compass-card" style="--card:#ffb315"><span>PROBLEM · 问题</span><textarea data-field="click.problem" rows="4" placeholder="触发情境 + 当前行为 + 可观察后果"></textarea><select data-field="click.problemKind" aria-label="问题信息来源"><option value="evidence">真实证据</option><option value="judgment">用户判断</option><option value="unknown">待验证</option></select></label>
+        <label class="compass-card" style="--card:#18a06a"><span>ADVANTAGE · 优势</span><textarea data-field="click.advantage" rows="4" placeholder="只有你更容易拥有的能力、洞察或动机"></textarea><select data-field="click.advantageKind" aria-label="优势信息来源"><option value="evidence">真实证据</option><option value="judgment" selected>用户判断</option><option value="unknown">待验证</option></select></label>
+        <label class="compass-card" style="--card:#356cff"><span>COMPETITION · 替代</span><textarea data-field="click.competitors" rows="4" placeholder="同类产品、人工、表格、自己解决或维持现状"></textarea><select data-field="click.competitorsKind" aria-label="替代信息来源"><option value="evidence">真实证据</option><option value="judgment">用户判断</option><option value="unknown">待验证</option></select></label>
+        <label class="compass-card" style="--card:#7a58d6"><span>APPROACH · 方案</span><textarea data-field="click.approach" rows="4" placeholder="先用什么方式交付结果；软件不是唯一选项"></textarea><select data-field="click.approachKind" aria-label="方案信息来源"><option value="evidence">真实证据</option><option value="judgment" selected>用户判断</option><option value="unknown">待验证</option></select></label>
+        <label class="compass-card" style="--card:#d9474f"><span>DIFFERENCE · 差异</span><textarea data-field="click.differentiators" rows="4" placeholder="客户能感知并能与替代方案比较的两个差异"></textarea><select data-field="click.differentiatorsKind" aria-label="差异信息来源"><option value="evidence">真实证据</option><option value="judgment" selected>用户判断</option><option value="unknown">待验证</option></select></label>
+      </div>
+      <label class="evidence-strip"><b>证据编号与原话</b><textarea data-field="click.evidence" rows="3" placeholder="例如 E01｜上周三，3 位独立讲师仍用飞书逐份批改；每次约 2 小时。材料请先脱敏。"></textarea></label>
+      <section class="generated-output" style="--tool:#ff6a2a"><span>实时生成 · FOUNDATION / FOUNDING HYPOTHESIS</span><p id="foundingHypothesis">请先填写客户、问题、方案、替代和差异。</p><small id="clickGate">还缺 6 项关键信息</small></section>
+      <div class="tool-actions"><button type="button" class="ds-launch book-ai" data-practice="book-click-hypothesis" data-tool-ai="click">交给 DeepSeek 审查假设</button><button type="button" data-copy-tool="click">复制本书成果</button><button type="button" data-next-tool="story">带入下一本 →</button></div>
+    </section>
+
+    <section class="tool-panel" data-tool-panel="story" id="panelStory" role="tabpanel" aria-labelledby="tabStory storyTitle" hidden>
+      <header class="tool-heading" style="--tool:#356cff">
+        <div class="book-number">02</div>
+        <div><p>USER STORY MAPPING · JEFF PATTON</p><h2 id="storyTitle">首版切片地图</h2><span>把平面的功能清单，重排成从触发到首个价值的完整路径。</span></div>
+        <a href="https://www.oreilly.com/library/view/user-story-mapping/9781491904893/" target="_blank" rel="noopener noreferrer">官方书页 ↗</a>
+      </header>
+      <div class="carry-forward"><b>从《Click》带入</b><p id="storyCarry">创始假设尚未形成。</p></div>
+      <div class="story-setup">
+        <label><span>触发事件</span><input data-field="story.trigger" maxlength="140" placeholder="用户在什么时刻开始这段旅程？"></label>
+        <label><span>首个价值时刻</span><input data-field="story.firstValue" maxlength="140" placeholder="发生什么可观察变化，用户第一次觉得有用？"></label>
+        <label><span>目标抵达时间</span><input data-field="story.ttfv" maxlength="60" placeholder="例如：10 分钟内"></label>
+      </div>
+      <form class="step-composer" id="stepComposer"><label><span>新增用户动作</span><input id="newStoryStep" maxlength="100" placeholder="用动词开头，例如：提交一段待修改内容"></label><button type="submit">＋ 加入首版路径</button></form>
+      <div class="story-map" id="storyMap">
+        <section><header><span>RELEASE 1 · 首版切片</span><small>必须端到端抵达价值</small></header><div class="story-lane release-lane" id="releaseLane" data-lane="release"></div></section>
+        <div class="release-cut"><span>首版切割线</span><i></i><small>切割线下不进入首版</small></div>
+        <section><header><span>LATER · 以后再做</span><small>不是删除，是保护当前下注</small></header><div class="story-lane later-lane" id="laterLane" data-lane="later"></div></section>
+      </div>
+      <section class="generated-output" style="--tool:#356cff"><span>实时生成 · RELEASE 1</span><p id="storyOutput">先添加 3—7 个用户动作，再指定其中一个首个价值时刻。</p><small id="storyGate">首版路径尚未达标</small></section>
+      <div class="tool-actions"><button type="button" class="ds-launch book-ai" data-practice="book-story-map" data-tool-ai="story">让 DeepSeek 挑战首版切片</button><button type="button" data-copy-tool="story">复制本书成果</button><button type="button" data-next-tool="shape">带入下一本 →</button></div>
+    </section>
+
+    <section class="tool-panel" data-tool-panel="shape" id="panelShape" role="tabpanel" aria-labelledby="tabShape shapeTitle" hidden>
+      <header class="tool-heading" style="--tool:#18a06a">
+        <div class="book-number">03</div>
+        <div><p>SHAPE UP · RYAN SINGER</p><h2 id="shapeTitle">范围熔炉</h2><span>先定 Appetite，再让范围服从时间；把粗糙方案变成有边界的 Pitch。</span></div>
+        <a href="https://basecamp.com/shapeup" target="_blank" rel="noopener noreferrer">官方全文 ↗</a>
+      </header>
+      <div class="carry-forward"><b>从 Story Map 带入</b><p id="shapeCarry">首版切片尚未形成。</p></div>
+      <div class="appetite-board">
+        <label class="appetite-control"><span>固定 Appetite</span><input type="range" min="1" max="14" step="1" value="7" data-field="shape.appetite"><b><output id="appetiteDays">7</output> 天</b><small>时间固定，范围可变</small></label>
+        <label><span>投入人数</span><input type="number" min="1" max="5" value="1" data-field="shape.people"><small>建议超级个体先按 1 人计算</small></label>
+        <div class="capacity-meter"><span>容量仪表</span><div><i id="capacityBar"></i></div><b id="capacityLabel">0 / 7 点</b><small id="capacityHint">范围仍在容量内</small></div>
+      </div>
+      <div class="shape-grid">
+        <label><span>PROBLEM · 问题故事</span><textarea data-field="shape.problem" rows="5" placeholder="用一个具体故事说明现状为何不工作"></textarea></label>
+        <label><span>SOLUTION · 粗粒度方案</span><textarea data-field="shape.solution" rows="5" placeholder="描述核心元素及连接，不写像素级规格"></textarea></label>
+        <label><span>RABBIT HOLES · 风险洞</span><textarea data-field="shape.rabbits" rows="5" placeholder="技术未知、设计难点、依赖和规避动作"></textarea></label>
+        <label><span>NO-GOS · 明确不做</span><textarea data-field="shape.noGos" rows="5" placeholder="为适配 Appetite 明确排除的功能与场景"></textarea></label>
+      </div>
+      <section class="scope-board"><header><div><span>从首版路径同步的工作</span><small>为每项选择粗颗粒工作量；总量超过容量必须删项。</small></div><button type="button" id="syncScope">从 Story Map 重新同步</button></header><div id="scopeItems"></div></section>
+      <section class="generated-output" style="--tool:#18a06a"><span>实时生成 · SHAPED PITCH</span><p id="shapeOutput">请补齐 Problem、Solution、Rabbit Holes 与 No-gos。</p><small id="shapeGate">Pitch 尚未达标</small></section>
+      <div class="tool-actions"><button type="button" class="ds-launch book-ai" data-practice="book-shapeup" data-tool-ai="shape">让 DeepSeek 做 Scope Hammer</button><button type="button" data-copy-tool="shape">复制本书成果</button><button type="button" data-next-tool="test">带入下一本 →</button></div>
+    </section>
+
+    <section class="tool-panel" data-tool-panel="test" id="panelTest" role="tabpanel" aria-labelledby="tabTest testTitle" hidden>
+      <header class="tool-heading" style="--tool:#d9474f">
+        <div class="book-number">04</div>
+        <div><p>TESTING BUSINESS IDEAS · BLAND &amp; OSTERWALDER</p><h2 id="testTitle">7 天证据实验室</h2><span>锁定高影响、低证据假设；先写阈值，再去获取真实行为。</span></div>
+        <a href="https://www.strategyzer.com/library/testing-business-ideas-book" target="_blank" rel="noopener noreferrer">官方书页 ↗</a>
+      </header>
+      <div class="carry-forward"><b>从 Shape Up 带入</b><p id="testCarry">有界 Pitch 尚未形成。</p></div>
+      <form class="assumption-composer" id="assumptionComposer">
+        <label><span>新增假设</span><input id="newAssumption" maxlength="160" placeholder="例如：目标学员会在 24 小时内根据反馈完成一次修改"></label>
+        <label><span>类型</span><select id="newAssumptionType"><option value="desirability">吸引力</option><option value="feasibility">可行性</option><option value="viability">盈利性</option></select></label>
+        <label><span>影响</span><select id="newAssumptionImpact"><option>5</option><option>4</option><option selected>3</option><option>2</option><option>1</option></select></label>
+        <label><span>证据</span><select id="newAssumptionEvidence"><option value="0">0 无证据</option><option value="1">1 很弱</option><option value="2" selected>2 初步</option><option value="3">3 中等</option><option value="4">4 较强</option><option value="5">5 已验证</option></select></label>
+        <button type="submit">＋ 加入矩阵</button>
+      </form>
+      <div class="assumption-lab">
+        <section class="risk-matrix"><header><span>影响 × 证据矩阵</span><small>左上角优先：高影响、低证据</small></header><div class="matrix-stage" id="matrixStage"><i class="axis-y">影响 ↑</i><i class="axis-x">证据 →</i><em class="risk-zone">优先测试区</em></div></section>
+        <section class="assumption-list"><header><span>假设队列</span><small id="riskLock">尚未锁定最高风险</small></header><div id="assumptionList"></div></section>
+      </div>
+      <div class="test-card">
+        <div class="card-label">TEST CARD · 执行前填写</div>
+        <label><span>唯一最高风险假设</span><textarea data-field="test.hypothesis" rows="3" placeholder="一次只测试一项"></textarea></label>
+        <label><span>7 天实验</span><textarea data-field="test.experiment" rows="3" placeholder="对象、渠道、步骤和真实交付方式"></textarea></label>
+        <label><span>行为指标</span><input data-field="test.metric" maxlength="120" placeholder="实际使用、支付、复用或完成任务"></label>
+        <label><span>测试对象</span><input data-field="test.sample" maxlength="120" placeholder="与目标客户一致的样本及数量"></label>
+        <label class="threshold pass"><span>通过线</span><input data-field="test.pass" maxlength="100" placeholder="实验开始前写定"></label>
+        <label class="threshold watch"><span>观察区</span><input data-field="test.watch" maxlength="100" placeholder="证据不足时怎么处理"></label>
+        <label class="threshold fail"><span>停止线</span><input data-field="test.fail" maxlength="100" placeholder="什么结果触发停止或重做"></label>
+        <label><span>诚信与安全护栏</span><input data-field="test.guardrail" maxlength="160" placeholder="隐私、人工交付、收费方式与失败恢复"></label>
+      </div>
+      <section class="generated-output" style="--tool:#d9474f"><span>实时生成 · 7-DAY TEST CARD</span><p id="testOutput">先锁定一项最高风险假设，并预写实验、指标与三档阈值。</p><small id="testGate">实验卡尚未达标</small></section>
+      <div class="tool-actions"><button type="button" class="ds-launch book-ai" data-practice="book-experiment-lab" data-tool-ai="test">让 DeepSeek 红队实验卡</button><button type="button" data-copy-tool="test">复制本书成果</button><button type="button" id="finishProject">生成完整首版任务书</button></div>
+    </section>
+  </main>
+</div>
+
+<footer class="lab-footer"><span>内容自动保存在当前浏览器。不要输入姓名、电话、邮箱、合同号、API Key 或未公开机密。</span><span>© 晴幂科技 · HUMAN AI FOR HAPPINESS</span></footer>
+<div class="lab-toast" id="labToast" role="status" aria-live="polite"></div>
+
+<div class="coach-modal" id="coachModal" role="dialog" aria-modal="true" aria-labelledby="coachTitle" aria-hidden="true" data-no-export>
+  <div class="coach-backdrop" data-coach-close></div>
+  <section class="coach-shell">
+    <header class="coach-header"><div><span class="ds-spark">✦ 真实 DEEPSEEK</span><h2 id="coachTitle">书籍工具会审</h2></div><button type="button" class="coach-close" data-coach-close aria-label="关闭 DeepSeek 练习">×</button></header>
+    <div class="coach-scroll">
+      <div class="coach-account" id="coachAccount" aria-live="polite">正在检查账号与会员权益…</div>
+      <section class="coach-section"><h3>1. 选择提示角度</h3><div class="coach-prompt-tabs" id="coachPromptTabs"></div><div class="coach-prompt-preview"><b id="coachPromptLabel">提示词</b><p id="coachPromptText"></p><button type="button" id="coachCopyPrompt">复制完整提示词</button></div></section>
+      <section class="coach-section coach-persona-section" id="coachPersonaSection" hidden><h3>2. 选择客户人设</h3><div class="persona-select" id="coachPersonaSelect"></div><div class="roleplay-history" id="roleplayHistory" hidden></div></section>
+      <section class="coach-section"><h3 id="coachInputHeading">2. 检查自动带入的脱敏材料</h3><p class="privacy-note">工具会把当前画布的结构化成果带入本次请求。请先检查并删除敏感信息；AI 建议不会自动升级为客户证据。</p><textarea id="coachMaterial" maxlength="12000" rows="8"></textarea><div class="coach-input-meta"><span id="coachCharCount">0 / 12000</span><span>至少 20 字</span></div></section>
+      <div class="coach-actions"><button type="button" class="coach-clear" id="coachClear">清空本次材料</button><button type="button" class="coach-reset" id="coachResetRoleplay" hidden>重置对话</button><button type="button" class="coach-submit" id="coachSubmit">提交给真实 DeepSeek</button></div>
+      <div class="coach-message" id="coachMessage" aria-live="polite"></div><section class="coach-result" id="coachResult" hidden aria-live="polite"></section>
+    </div>
+  </section>
+</div>
+
+<noscript>请启用 JavaScript 以使用书籍互动工作台与 DeepSeek 会审。</noscript>
+<script src="book-lab.js"></script>
+<script src="deepseek-practice.js"></script>
+</body>
+</html>

@@ -1,7 +1,15 @@
 (function(){
   "use strict";
   var deck=document.getElementById("deck");
-  var slides=[].slice.call(deck.querySelectorAll(".slide"));
+  var query=new URLSearchParams(location.search);
+  var mode60=query.get("mode")==="60";
+  var allSlides=[].slice.call(deck.querySelectorAll(".slide"));
+  var slides=mode60?allSlides.filter(function(slide){return slide.getAttribute("data-core")!=="false"}):allSlides;
+  if(mode60){
+    slides.sort(function(a,b){
+      return Number(a.getAttribute("data-core-order")||999)-Number(b.getAttribute("data-core-order")||999);
+    });
+  }
   var counter=document.getElementById("counter");
   var progress=document.getElementById("progressBar");
   var notesPanel=document.getElementById("notesPanel");
@@ -10,6 +18,9 @@
   var help=document.getElementById("help");
   var index=0;
   var touchStart=null;
+
+  document.body.classList.toggle("mode-60",mode60);
+  allSlides.forEach(function(slide){slide.classList.toggle("is-mode-hidden",slides.indexOf(slide)<0)});
 
   slides.forEach(function(slide,i){
     var section=slide.getAttribute("data-section")||"Lesson 03";
@@ -46,9 +57,10 @@
     counter.textContent=String(index+1).padStart(2,"0")+" / "+String(slides.length).padStart(2,"0");
     progress.style.width=((index+1)/slides.length*100)+"%";
     var note=slides[index].querySelector("aside.notes");
-    notesPanel.textContent=note?note.textContent.trim():"本页没有讲师备注。";
+    var modeNote=mode60&&window.qingmi60Notes?window.qingmi60Notes[titleAt(index)]:"";
+    notesPanel.textContent=modeNote||(note?note.textContent.trim():"本页没有讲师备注。");
     [].slice.call(menuItems.querySelectorAll("button")).forEach(function(btn,i){btn.classList.toggle("active",i===index)});
-    document.title=String(index+1).padStart(2,"0")+"｜"+titleAt(index)+"｜晴幂科技";
+    document.title=String(index+1).padStart(2,"0")+"｜"+titleAt(index)+(mode60?"｜60分钟核心课":"")+"｜晴幂科技";
     if(updateHash!==false)history.replaceState(null,"","#slide="+(index+1));
   }
 
@@ -73,6 +85,15 @@
   document.getElementById("fullBtn").addEventListener("click",toggleFullscreen);
   document.getElementById("helpBtn").addEventListener("click",toggleHelp);
   help.addEventListener("click",function(e){if(e.target===help)toggleHelp()});
+  var controls=document.querySelector(".controls");
+  if(controls){
+    var modeLink=document.createElement("a");
+    modeLink.className="mode-switch";
+    modeLink.href=mode60?"index.html":"index.html?mode=60";
+    modeLink.textContent=mode60?"90′完整版":"60′核心课";
+    modeLink.title=mode60?"切换到90分钟完整工作坊":"切换到60分钟核心授课模式";
+    controls.insertBefore(modeLink,controls.firstChild);
+  }
 
   window.addEventListener("keydown",function(e){
     if(document.body.classList.contains("ds-open"))return;
@@ -104,5 +125,5 @@
   window.addEventListener("hashchange",function(){go(parseHash(),false)});
   buildMenu();
   go(parseHash(),false);
-  window.qingmiDeck={go:go,next:function(){go(index+1)},prev:function(){go(index-1)},count:slides.length,current:function(){return index+1}};
+  window.qingmiDeck={go:go,next:function(){go(index+1)},prev:function(){go(index-1)},count:slides.length,current:function(){return index+1},mode:mode60?"60":"90"};
 })();

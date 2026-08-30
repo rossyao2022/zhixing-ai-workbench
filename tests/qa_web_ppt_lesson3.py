@@ -143,7 +143,7 @@ def verify_deck(page, mobile=False):
     assert slide_count == 28, {"expected": 28, "actual": slide_count, "base": BASE, "url": page.url, "title": page.title()}
     assert page.locator(".deck > .practice-slide").count() == 5
     assert page.locator(".ds-launch").count() == 5
-    assert page.evaluate("window.qingmiDeepSeek.practices.length") == 5
+    assert page.evaluate("window.qingmiDeepSeek.practices.length") == 9
     assert page.locator(".deck > .slide.is-active").count() == 1
     assert page.locator("#counter").inner_text().strip() == "01 / 28"
     assert "把客户证据" in page.locator(".slide.is-active h1").inner_text()
@@ -254,7 +254,7 @@ with sync_playwright() as playwright:
 print(json.dumps({
     "status": "passed",
     "slides": 28,
-    "deepseek_practices": 5,
+    "deepseek_practices": 9,
     "desktop": desktop_result,
     "mobile": mobile_result,
     "ambiguous_retry": retry_result,
